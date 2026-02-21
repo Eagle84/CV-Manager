@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum EmailDirection {
+  inbound
+  outbound
+}
+
+enum ApplicationStatus {
+  submitted
+  received
+  rejected
+  interview
+  assessment
+  offer
+  withdrawn
+}
+
+enum FollowupState {
+  open
+  done
+  snoozed
+}
+
+model GmailAccount {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  accessToken   String?
+  refreshToken  String
+  tokenExpiry   DateTime?
+  lastHistoryId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model EmailMessage {
+  id                 String         @id @default(cuid())
+  gmailMessageId     String         @unique
+  threadId           String
+  direction          EmailDirection
+  fromEmail          String
+  toEmail            String
+  subject            String
+  bodyText           String         @default("")
+  bodyHtml           String         @default("")
+  sentAt             DateTime?
+  receivedAt         DateTime?
+  rawHeadersJson     String         @default("{}")
+  parsedCompanyDomain String        @default("")
+  parsedRole         String         @default("unknown-role")
+  normalizedRole     String         @default("unknown-role")
+  classification     String         @default("unclassified")
+  groupSenderDomain  String         @default("")
+  groupSubjectKey    String         @default("")
+  aiExtractionJson   String         @default("{}")
+  aiConfidence       Float          @default(0)
+  applicationId      String?
+  createdAt          DateTime       @default(now())
+
+  application        Application?   @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  events             ApplicationEvent[]
+  classificationLogs ClassificationRuleLog[]
+
+  @@index([parsedCompanyDomain, normalizedRole])
+  @@index([groupSenderDomain, groupSubjectKey])
+  @@index([applicationId])
+}
+
+model Application {
+  id                  String            @id @default(cuid())
+  companyName         String            @default("Unknown Company")
+  companyDomain       String
+  roleTitle           String
+  normalizedRoleTitle String
+  status              ApplicationStatus @default(submitted)
+  sourceEmailMessageId String?
+  groupSenderDomain   String            @default("")
+  groupSubjectKey     String            @default("")
+  firstSeenAt         DateTime
+  lastActivityAt      DateTime
+  notes               String            @default("")
+  manualStatusLocked  Boolean           @default(false)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  events              ApplicationEvent[]
+  emails              EmailMessage[]
+  followups           FollowupTask[]
+
+  @@unique([groupSenderDomain, groupSubjectKey])
+  @@index([companyDomain, normalizedRoleTitle])
+  @@index([status, lastActivityAt])
+}
+
+model ApplicationEvent {
+  id            String       @id @default(cuid())
+  applicationId String
+  eventType     String
+  eventAt       DateTime
+  emailMessageId String?
+  detailsJson   String       @default("{}")
+  createdAt     DateTime     @default(now())
+
+  application   Application  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  emailMessage  EmailMessage? @relation(fields: [emailMessageId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId, eventAt])
+}
+
+model FollowupTask {
+  id            String       @id @default(cuid())
+  applicationId String
+  dueAt         DateTime
+  reason        String
+  state         FollowupState @default(open)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  application   Application   @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([state, dueAt])
+}
+
+model ClassificationRuleLog {
+  id             String      @id @default(cuid())
+  emailMessageId String
+  matchedRule    String
+  predictedStatus String
+  confidence     Float
+  createdAt      DateTime    @default(now())
+
+  emailMessage   EmailMessage @relation(fields: [emailMessageId], references: [id], onDelete: Cascade)
+
+  @@index([emailMessageId])
+}
+
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

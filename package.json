@@ -1,0 +1,30 @@
+{
+  "name": "cv_manager",
+  "version": "1.0.0",
+  "description": "CV Application Gmail Tracker monorepo",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c cyan,yellow \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "dev:backend": "npm run dev -w backend",
+    "dev:frontend": "npm run dev -w frontend",
+    "build": "npm run build -w shared && npm run build -w backend && npm run build -w frontend",
+    "test": "npm run test -w backend && npm run test -w shared"
+  },
+  "keywords": [
+    "gmail",
+    "cv",
+    "tracker"
+  ],
+  "license": "ISC",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

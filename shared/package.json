@@ -1,0 +1,30 @@
+{
+  "name": "shared",
+  "version": "1.0.0",
+  "description": "Shared types for CV Gmail tracker",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test"
+  },
+  "keywords": [
+    "types"
+  ],
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^24.10.13",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
