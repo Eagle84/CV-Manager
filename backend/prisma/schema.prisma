@@ -110,6 +110,8 @@ model CV {
   extractedText   String?
   skills          String?
   summary         String?
+  rolePrimary     String?
+  experienceYears String?
   isDefault       Boolean  @default(false)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt

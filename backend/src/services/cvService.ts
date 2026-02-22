@@ -13,6 +13,8 @@ export interface CvSummary {
     isDefault: boolean;
     skills: string;
     summary: string;
+    rolePrimary: string;
+    experienceYears: string;
     createdAt: string;
 }
 
@@ -26,6 +28,8 @@ export const listCvs = async (): Promise<CvSummary[]> => {
         isDefault: cv.isDefault,
         skills: cv.skills || "",
         summary: cv.summary || "",
+        rolePrimary: cv.rolePrimary || "",
+        experienceYears: cv.experienceYears || "",
         createdAt: cv.createdAt.toISOString(),
     }));
 };
@@ -85,6 +89,8 @@ export const processCvUpload = async (filePath: string, filename: string, fileTy
             extractedText: text,
             skills: analysis?.skills.join(", ") || "",
             summary: analysis?.summary || "",
+            rolePrimary: analysis?.rolePrimary || "",
+            experienceYears: analysis?.experienceYears || "",
             isDefault: existingCount === 0,
         },
     });

@@ -96,6 +96,11 @@ export const CVsPage = () => {
                                 </div>
 
                                 <div style={{ marginTop: '1rem' }}>
+                                    {cv.rolePrimary && (
+                                        <p style={{ margin: '0 0 0.2rem 0', fontWeight: 600, color: 'var(--accent-color)' }}>
+                                            👤 {cv.rolePrimary} {cv.experienceYears ? ` | ${cv.experienceYears}` : ""}
+                                        </p>
+                                    )}
                                     <p><strong>Agent Summary:</strong></p>
                                     <p className="panel-help" style={{ marginBottom: '1rem' }}>{cv.summary || "No summary extracted."}</p>
 

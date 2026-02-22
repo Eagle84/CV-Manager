@@ -117,6 +117,8 @@ export interface CvDto {
   isDefault: boolean;
   skills: string;
   summary: string;
+  rolePrimary: string;
+  experienceYears: string;
   createdAt: string;
 }
 

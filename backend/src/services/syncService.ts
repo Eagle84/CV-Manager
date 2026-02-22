@@ -307,8 +307,10 @@ const parseFocusedSubjectCandidates = (
   normalized = normalized
     .replace(/^thank(?:s| you) for applying/i, "")
     .replace(/^thank(?:s| you) for your interest(?:\s+in)?/i, "")
+    .replace(/^you(?:'ve| have) been referred to/i, "")
+    .replace(/^referral(?:\s+(?:to|for))?\s+/i, "")
     .trim();
-  normalized = normalized.replace(/^(?:to|for)\s+/i, "").trim();
+  normalized = normalized.replace(/^(?:to|for|at)\s+/i, "").trim();
   normalized = normalized.replace(/^the\s+/i, "").trim();
   normalized = normalized.replace(/[|,]\s*thank.*$/i, "").trim();
 
@@ -571,85 +573,95 @@ const resolveCompanyIdentity = (input: {
   const normalizedSenderDomain = normalizeDomain(input.senderDomain);
   const normalizedAiCompanyDomain = normalizeDomain(input.aiCompanyDomain);
 
+  let result: {
+    companyName: string;
+    companyDomain: string;
+    source: "subject" | "sender" | "content" | "domain";
+  };
+
   const subjectCandidate = sanitizeCompanyName(input.subjectCompanyCandidate);
   if (subjectCandidate && looksLikeCompanyName(subjectCandidate)) {
-    return {
+    result = {
       companyName: subjectCandidate,
       companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
       source: "subject",
     };
+  } else {
+    const subjectDerivedRegex = extractCompanyFromSubject(input.subject);
+    if (subjectDerivedRegex) {
+      result = {
+        companyName: subjectDerivedRegex,
+        companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
+        source: "subject",
+      };
+    } else {
+      const aiCompanyName = sanitizeCompanyName(input.aiCompanyName);
+      if (
+        aiCompanyName &&
+        looksLikeCompanyName(aiCompanyName) &&
+        isCompanyMentionedInSubject(input.subject, aiCompanyName)
+      ) {
+        result = {
+          companyName: aiCompanyName,
+          companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
+          source: "subject",
+        };
+      } else {
+        const senderDerived = extractSenderCompany(input.fromDisplayName, normalizedSenderDomain);
+        if (senderDerived) {
+          const resolvedDomain = isAtsDomain(normalizedSenderDomain)
+            ? normalizedAiCompanyDomain ||
+            normalizeDomain(inferCompanyNameFromDomain(normalizedSenderDomain))
+            : normalizedSenderDomain || normalizedAiCompanyDomain;
+          result = {
+            companyName: senderDerived,
+            companyDomain: resolvedDomain || normalizedSenderDomain,
+            source: "sender",
+          };
+        } else {
+          const contentDerivedRegex = extractCompanyFromBody(input.body);
+          if (contentDerivedRegex) {
+            result = {
+              companyName: contentDerivedRegex,
+              companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
+              source: "content",
+            };
+          } else if (aiCompanyName) {
+            result = {
+              companyName: aiCompanyName,
+              companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
+              source: "content",
+            };
+          } else if (normalizedSenderDomain) {
+            result = {
+              companyName: inferCompanyNameFromDomain(normalizedSenderDomain),
+              companyDomain: normalizedSenderDomain,
+              source: "domain",
+            };
+          } else {
+            result = {
+              companyName: "Unknown Company",
+              companyDomain: "",
+              source: "domain",
+            };
+          }
+        }
+      }
+    }
   }
 
-  const subjectDerivedRegex = extractCompanyFromSubject(input.subject);
-  if (subjectDerivedRegex) {
-    return {
-      companyName: subjectDerivedRegex,
-      companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
-      source: "subject",
-    };
-  }
-
-  const aiCompanyName = sanitizeCompanyName(input.aiCompanyName);
+  // Final sanitization: if the company name ends with a known role indicator, strip it.
+  // Example: "Scopio Labs for Director of QA" -> "Scopio Labs"
+  const companyCleaned = result.companyName.replace(/\s+for\s+.*$/i, "").trim();
   if (
-    aiCompanyName &&
-    looksLikeCompanyName(aiCompanyName) &&
-    isCompanyMentionedInSubject(input.subject, aiCompanyName)
+    companyCleaned &&
+    companyCleaned !== result.companyName &&
+    looksLikeCompanyName(companyCleaned)
   ) {
-    return {
-      companyName: aiCompanyName,
-      companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
-      source: "subject",
-    };
+    result.companyName = companyCleaned;
   }
 
-  // Pass senderDomain so ATS domains (smartrecruiters.com, greenhouse.io, …)
-  // are handled: the display name (e.g. "CyberArk") is used as company name
-  // and the domain is resolved from AI or inferred from the display name —
-  // NOT from the ATS domain itself.
-  const senderDerived = extractSenderCompany(input.fromDisplayName, normalizedSenderDomain);
-  if (senderDerived) {
-    // For ATS senders the sender domain is the ATS's domain, not the company's.
-    // Prefer the AI-extracted domain; fall back to inferring from the company name.
-    const resolvedDomain = isAtsDomain(normalizedSenderDomain)
-      ? normalizedAiCompanyDomain || normalizeDomain(inferCompanyNameFromDomain(normalizedSenderDomain))
-      : normalizedSenderDomain || normalizedAiCompanyDomain;
-    return {
-      companyName: senderDerived,
-      companyDomain: resolvedDomain || normalizedSenderDomain,
-      source: "sender",
-    };
-  }
-
-  const contentDerivedRegex = extractCompanyFromBody(input.body);
-  if (contentDerivedRegex) {
-    return {
-      companyName: contentDerivedRegex,
-      companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
-      source: "content",
-    };
-  }
-
-  if (aiCompanyName) {
-    return {
-      companyName: aiCompanyName,
-      companyDomain: normalizedAiCompanyDomain || normalizedSenderDomain,
-      source: "content",
-    };
-  }
-
-  if (normalizedSenderDomain) {
-    return {
-      companyName: inferCompanyNameFromDomain(normalizedSenderDomain),
-      companyDomain: normalizedSenderDomain,
-      source: "domain",
-    };
-  }
-
-  return {
-    companyName: "Unknown Company",
-    companyDomain: "",
-    source: "domain",
-  };
+  return result;
 };
 
 const chooseEventType = (input: {

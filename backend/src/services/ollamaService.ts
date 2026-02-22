@@ -26,6 +26,7 @@ const cvExtractionSchema = z.object({
   skills: z.array(z.string()),
   summary: z.string().nullable(),
   rolePrimary: z.string().nullable(),
+  experienceYears: z.string().nullable(),
 });
 
 const jobMatchingSchema = z.object({
@@ -228,10 +229,16 @@ export const extractCvWithOllama = async (text: string, overrides?: { model?: st
         model,
         prompt: `Analyze this CV text and provide the analysis in the following JSON format ONLY:
 {
-  "skills": ["skill1", "skill2", ...],
-  "summary": "Full summary text here",
-  "rolePrimary": "Job Title"
+  "skills": ["Category: Tool1, Tool2", "Domain Expertise", ...],
+  "summary": "Professional 3rd-person summary emphasizing high-level achievements and impact.",
+  "rolePrimary": "Most recent or significant job title",
+  "experienceYears": "Total estimated years (e.g. '15+ years')"
 }
+
+Rules for Extraction:
+1. summary: Write a concise, powerful 3-4 sentence professional profile. Focus on 'What' and 'How' (Impact).
+2. skills: Group tools logically (e.g. 'Automation: Playwright, Cypress'). Include core methodologies.
+3. experienceYears: Infer from dates provided if not explicitly stated.
 
 Text: ${text.slice(0, 10000)}`,
         stream: false,

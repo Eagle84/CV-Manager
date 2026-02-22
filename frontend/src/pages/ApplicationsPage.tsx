@@ -138,6 +138,7 @@ export const ApplicationsPage = () => {
         notes,
         status: detail?.status,
         roleTitle: detail?.roleTitle,
+        companyName: detail?.companyName,
         manualStatusLocked: true,
       });
       await Promise.all([loadList(), loadDetail(selectedId)]);
@@ -330,6 +331,14 @@ export const ApplicationsPage = () => {
                   value={detail.roleTitle}
                   onChange={(event) => setDetail({ ...detail, roleTitle: event.target.value })}
                   placeholder="e.g. Senior Software Engineer"
+                />
+              </label>
+              <label>
+                Company
+                <input
+                  value={detail.companyName}
+                  onChange={(event) => setDetail({ ...detail, companyName: event.target.value })}
+                  placeholder="e.g. Google"
                 />
               </label>
             </div>
