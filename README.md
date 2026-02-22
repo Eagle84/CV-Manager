@@ -1,6 +1,10 @@
-# CV Application Gmail Tracker
+# CV Manager
 
 A local-first monorepo that connects to your Gmail account, tracks job application confirmations and responses, classifies outcomes, and prevents duplicate CV submissions by `company domain + role`.
+
+## Legal
+- [Privacy Policy](PRIVACY.md)
+- [Terms of Service](TERMS.md)
 
 ## Stack
 
