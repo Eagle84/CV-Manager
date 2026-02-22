@@ -137,6 +137,7 @@ export const ApplicationsPage = () => {
       await apiClient.patchApplication(selectedId, {
         notes,
         status: detail?.status,
+        roleTitle: detail?.roleTitle,
         manualStatusLocked: true,
       });
       await Promise.all([loadList(), loadDetail(selectedId)]);
@@ -325,7 +326,11 @@ export const ApplicationsPage = () => {
               </label>
               <label>
                 Role
-                <input value={detail.roleTitle} readOnly />
+                <input
+                  value={detail.roleTitle}
+                  onChange={(event) => setDetail({ ...detail, roleTitle: event.target.value })}
+                  placeholder="e.g. Senior Software Engineer"
+                />
               </label>
             </div>
 

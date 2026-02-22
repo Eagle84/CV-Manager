@@ -9,9 +9,10 @@ export const scrapeJobDescription = async (url: string): Promise<string> => {
         const response = await fetch(url, {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             },
         });
-        if (!response.ok) throw new Error(`Failed to fetch URL: ${response.status}`);
+        if (!response.ok) throw new Error(`Could not access the website (Status ${response.status}). Many company sites block automated tools; you can try copying the text manually instead.`);
         const html = await response.text();
         const $ = cheerio.load(html);
 
@@ -22,8 +23,15 @@ export const scrapeJobDescription = async (url: string): Promise<string> => {
         const bodyText = $("body").text();
 
         // Clean up whitespace
-        return bodyText.replace(/\s+/g, " ").trim();
-    } catch (err) {
+        const cleaned = bodyText.replace(/\s+/g, " ").trim();
+        if (!cleaned) throw new Error("The website was reached, but no readable text was found. It might be protected or a single-page app (SPA).");
+
+        return cleaned;
+    } catch (err: any) {
+        if (err.code === 'ENOTFOUND' || err.cause?.code === 'ENOTFOUND' || err.message?.includes('fetch failed')) {
+            const hostname = (() => { try { return new URL(url).hostname; } catch { return url; } })();
+            throw new Error(`Reachability error: Could not resolve or connect to '${hostname}'. Please verify the URL or your internet connection.`);
+        }
         console.error("Scraping error:", err);
         throw err;
     }
@@ -39,6 +47,11 @@ export const analyzeJobUrl = async (url: string) => {
 
     const settings = await getSettings();
     const analysis = await matchJobWithCv(jdText, cv.extractedText, { model: settings.modelMatcher });
+
+    if (!analysis) {
+        throw new Error("Could not generate AI analysis for this job. The AI model might be busy or the content was unreadable.");
+    }
+
     return {
         url,
         jdSnippet: jdText.slice(0, 500) + "...",

@@ -32,6 +32,8 @@ const jobMatchingSchema = z.object({
   matchScore: z.number().min(0).max(100),
   matchingSkills: z.array(z.string()),
   missingSkills: z.array(z.string()),
+  strengths: z.array(z.string()),
+  overqualifiedSkills: z.array(z.string()),
   advice: z.string(),
 });
 
@@ -291,10 +293,17 @@ export const matchJobWithCv = async (targetJob: string, cvText: string, override
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        prompt: `Compare this job description with my CV. Return a matchScore (0-100), matchingSkills, missingSkills (things mentioned in job but not in cv), and specific advice on how to proceed.
+        prompt: `Compare this job description with my CV. Return a JSON object with:
+- matchScore (0-100)
+- matchingSkills (list of strings)
+- missingSkills (gaps/no knowledge - list of strings)
+- strengths (what is strong/perfect match on my CV - list of strings)
+- overqualifiedSkills (what I have MORE than expected for this role - list of strings)
+- advice (specific actionable advice on how to proceed)
+
 Job Description: ${targetJob.slice(0, 8000)}
 My CV: ${cvText.slice(0, 8000)}
-Return ONLY JSON.`,
+Return ONLY valid JSON.`,
         stream: false,
         format: "json",
         options: { temperature: 0 },

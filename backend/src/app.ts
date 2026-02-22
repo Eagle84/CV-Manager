@@ -25,6 +25,25 @@ import { runSync } from "./services/syncService.js";
 import multer from "multer";
 import { listCvs, deleteCv, setDefaultCv, processCvUpload } from "./services/cvService.js";
 import { analyzeJobUrl, findMatchingJobsOnPage } from "./services/analyzerService.js";
+import { randomUUID } from "crypto";
+
+interface BatchItem {
+  url: string;
+  company?: string;
+  status: "pending" | "running" | "done" | "error";
+  result?: any;
+  error?: string;
+}
+
+interface BatchJob {
+  id: string;
+  status: "running" | "done";
+  items: BatchItem[];
+  progress: { done: number; total: number };
+}
+
+const batchJobs = new Map<string, BatchJob>();
+
 
 const upload = multer({ dest: "uploads/cvs" });
 
@@ -412,6 +431,55 @@ export const createApp = (): express.Express => {
       res.json(result);
     }),
   );
+
+  app.post(
+    "/api/analyze/batch",
+    asyncHandler(async (req, res) => {
+      const itemsSchema = z.array(z.object({ url: z.string().url(), company: z.string().optional() }));
+      const { items } = z.object({ items: itemsSchema }).parse(req.body);
+
+      const batchId = randomUUID();
+      const job: BatchJob = {
+        id: batchId,
+        status: "running",
+        items: items.map((it) => ({ ...it, status: "pending" })),
+        progress: { done: 0, total: items.length },
+      };
+
+      batchJobs.set(batchId, job);
+
+      // Sequential processing loop (not awaited)
+      (async () => {
+        for (const item of job.items) {
+          item.status = "running";
+          try {
+            item.result = await analyzeJobUrl(item.url);
+            item.status = "done";
+          } catch (err: any) {
+            item.status = "error";
+            item.error = err.message || "Failed to analyze URL";
+          }
+          job.progress.done++;
+        }
+        job.status = "done";
+      })();
+
+      res.json({ batchId });
+    }),
+  );
+
+  app.get(
+    "/api/analyze/batch/:id",
+    asyncHandler(async (req, res) => {
+      const id = String(req.params.id);
+      const job = batchJobs.get(id);
+      if (!job) {
+        return res.status(404).json({ error: "Batch job not found" });
+      }
+      res.json(job);
+    }),
+  );
+
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     const message = error instanceof Error ? error.message : "Unexpected server error";

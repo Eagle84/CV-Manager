@@ -127,8 +127,25 @@ export interface JobAnalysisResult {
     matchScore: number;
     matchingSkills: string[];
     missingSkills: string[];
+    strengths: string[];
+    overqualifiedSkills: string[];
     advice: string;
   };
+}
+
+export interface BatchItem {
+  url: string;
+  company?: string;
+  status: "pending" | "running" | "done" | "error";
+  result?: JobAnalysisResult;
+  error?: string;
+}
+
+export interface BatchJob {
+  id: string;
+  status: "running" | "done";
+  items: BatchItem[];
+  progress: { done: number; total: number };
 }
 
 export const apiClient = {
@@ -257,6 +274,14 @@ export const apiClient = {
   },
   exploreJobsOnPage: async (url: string): Promise<{ title: string; url: string; reasoning: string }[]> => {
     const response = await api.post<{ title: string; url: string; reasoning: string }[]>("/api/analyze/explore", { url }, { timeout: 600000 });
+    return response.data;
+  },
+  startBatchAnalysis: async (items: { url: string; company?: string }[]): Promise<{ batchId: string }> => {
+    const response = await api.post<{ batchId: string }>("/api/analyze/batch", { items });
+    return response.data;
+  },
+  getBatchStatus: async (batchId: string): Promise<BatchJob> => {
+    const response = await api.get<BatchJob>(`/api/analyze/batch/${batchId}`);
     return response.data;
   },
 };
