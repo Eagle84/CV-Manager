@@ -5,10 +5,14 @@ import { ApplicationsPage } from "./pages/ApplicationsPage.tsx";
 import { CompanyOverviewPage } from "./pages/CompanyOverviewPage.tsx";
 import { DashboardPage } from "./pages/DashboardPage.tsx";
 import { SettingsPage } from "./pages/SettingsPage.tsx";
+import { CVsPage } from "./pages/CVsPage.tsx";
+import { JobMatcherPage } from "./pages/JobMatcherPage.tsx";
 
 const links = [
   { to: "/dashboard", label: "Dashboard", hint: "Pipeline at a glance" },
   { to: "/applications", label: "Applications", hint: "Review and update status" },
+  { to: "/cvs", label: "My CVs", hint: "Upload and scan resumes" },
+  { to: "/matcher", label: "Job Matcher", hint: "Analyze job portal URLs" },
   { to: "/settings", label: "Settings", hint: "Gmail, schedule, operations" },
 ];
 
@@ -77,6 +81,8 @@ function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/applications" element={<ApplicationsPage />} />
           <Route path="/companies/:companyDomain" element={<CompanyOverviewPage />} />
+          <Route path="/cvs" element={<CVsPage />} />
+          <Route path="/matcher" element={<JobMatcherPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>

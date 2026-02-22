@@ -79,6 +79,10 @@ export interface SettingsDto {
   followupAfterDays: number;
   syncLookbackDays: number;
   connectedEmail: string | null;
+  modelEmail: string;
+  modelCv: string;
+  modelMatcher: string;
+  modelExplorer: string;
 }
 
 export interface SyncResponse {
@@ -105,6 +109,26 @@ export interface ResetAndSyncResponse {
     checkpointsReset: number;
   };
   sync: SyncResponse;
+}
+
+export interface CvDto {
+  id: string;
+  filename: string;
+  isDefault: boolean;
+  skills: string;
+  summary: string;
+  createdAt: string;
+}
+
+export interface JobAnalysisResult {
+  url: string;
+  jdSnippet: string;
+  analysis: {
+    matchScore: number;
+    matchingSkills: string[];
+    missingSkills: string[];
+    advice: string;
+  };
 }
 
 export const apiClient = {
@@ -171,8 +195,16 @@ export const apiClient = {
     digestCron?: string;
     followupAfterDays?: number;
     syncLookbackDays?: number;
+    modelEmail?: string;
+    modelCv?: string;
+    modelMatcher?: string;
+    modelExplorer?: string;
   }): Promise<SettingsDto> => {
     const response = await api.patch<SettingsDto>("/api/settings", payload);
+    return response.data;
+  },
+  getOllamaModels: async (): Promise<string[]> => {
+    const response = await api.get<string[]>("/api/ollama/models");
     return response.data;
   },
   getAuthStatus: async (): Promise<{ connected: boolean; email: string | null }> => {
@@ -198,6 +230,32 @@ export const apiClient = {
     const response = await api.post<ResetAndSyncResponse>("/api/data/reset-and-sync", undefined, {
       timeout: 900000,
     });
+    return response.data;
+  },
+  fetchCvs: async (): Promise<CvDto[]> => {
+    const response = await api.get<CvDto[]>("/api/cvs");
+    return response.data;
+  },
+  uploadCv: async (file: File): Promise<CvDto> => {
+    const formData = new FormData();
+    formData.append("cv", file);
+    const response = await api.post<CvDto>("/api/cvs", formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+    return response.data;
+  },
+  deleteCv: async (id: string): Promise<void> => {
+    await api.delete(`/api/cvs/${id}`);
+  },
+  setDefaultCv: async (id: string): Promise<void> => {
+    await api.patch(`/api/cvs/${id}/default`);
+  },
+  analyzeJobUrl: async (url: string): Promise<JobAnalysisResult> => {
+    const response = await api.post<JobAnalysisResult>("/api/analyze/url", { url });
+    return response.data;
+  },
+  exploreJobsOnPage: async (url: string): Promise<{ title: string; url: string; reasoning: string }[]> => {
+    const response = await api.post<{ title: string; url: string; reasoning: string }[]>("/api/analyze/explore", { url });
     return response.data;
   },
 };

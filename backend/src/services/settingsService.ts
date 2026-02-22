@@ -6,6 +6,10 @@ export const SETTINGS_KEYS = {
   digestCron: "digest_cron",
   followupAfterDays: "followup_after_days",
   syncLookbackDays: "sync_lookback_days",
+  modelEmail: "model_email",
+  modelCv: "model_cv",
+  modelMatcher: "model_matcher",
+  modelExplorer: "model_explorer",
 } as const;
 
 export interface AppSettings {
@@ -13,6 +17,10 @@ export interface AppSettings {
   digestCron: string;
   followupAfterDays: number;
   syncLookbackDays: number;
+  modelEmail: string;
+  modelCv: string;
+  modelMatcher: string;
+  modelExplorer: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -20,6 +28,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   digestCron: config.DIGEST_CRON,
   followupAfterDays: config.FOLLOWUP_AFTER_DAYS,
   syncLookbackDays: config.SYNC_LOOKBACK_DAYS,
+  modelEmail: config.OLLAMA_MODEL,
+  modelCv: config.OLLAMA_MODEL,
+  modelMatcher: config.OLLAMA_MODEL,
+  modelExplorer: config.OLLAMA_MODEL,
 };
 
 export const ensureDefaultSettings = async (): Promise<void> => {
@@ -28,6 +40,10 @@ export const ensureDefaultSettings = async (): Promise<void> => {
     [SETTINGS_KEYS.digestCron, DEFAULT_SETTINGS.digestCron],
     [SETTINGS_KEYS.followupAfterDays, String(DEFAULT_SETTINGS.followupAfterDays)],
     [SETTINGS_KEYS.syncLookbackDays, String(DEFAULT_SETTINGS.syncLookbackDays)],
+    [SETTINGS_KEYS.modelEmail, DEFAULT_SETTINGS.modelEmail],
+    [SETTINGS_KEYS.modelCv, DEFAULT_SETTINGS.modelCv],
+    [SETTINGS_KEYS.modelMatcher, DEFAULT_SETTINGS.modelMatcher],
+    [SETTINGS_KEYS.modelExplorer, DEFAULT_SETTINGS.modelExplorer],
   ];
 
   for (const [key, value] of defaults) {
@@ -60,6 +76,10 @@ export const getSettings = async (): Promise<AppSettings> => {
     digestCron: map.get(SETTINGS_KEYS.digestCron) ?? DEFAULT_SETTINGS.digestCron,
     followupAfterDays: Number(map.get(SETTINGS_KEYS.followupAfterDays) ?? DEFAULT_SETTINGS.followupAfterDays),
     syncLookbackDays: Number(map.get(SETTINGS_KEYS.syncLookbackDays) ?? DEFAULT_SETTINGS.syncLookbackDays),
+    modelEmail: map.get(SETTINGS_KEYS.modelEmail) ?? DEFAULT_SETTINGS.modelEmail,
+    modelCv: map.get(SETTINGS_KEYS.modelCv) ?? DEFAULT_SETTINGS.modelCv,
+    modelMatcher: map.get(SETTINGS_KEYS.modelMatcher) ?? DEFAULT_SETTINGS.modelMatcher,
+    modelExplorer: map.get(SETTINGS_KEYS.modelExplorer) ?? DEFAULT_SETTINGS.modelExplorer,
   };
 };
 
@@ -102,6 +122,46 @@ export const updateSettings = async (payload: Partial<AppSettings>): Promise<App
         where: { key: SETTINGS_KEYS.syncLookbackDays },
         update: { value: String(payload.syncLookbackDays) },
         create: { key: SETTINGS_KEYS.syncLookbackDays, value: String(payload.syncLookbackDays) },
+      }),
+    );
+  }
+
+  if (payload.modelEmail) {
+    writes.push(
+      prisma.appSetting.upsert({
+        where: { key: SETTINGS_KEYS.modelEmail },
+        update: { value: payload.modelEmail },
+        create: { key: SETTINGS_KEYS.modelEmail, value: payload.modelEmail },
+      }),
+    );
+  }
+
+  if (payload.modelCv) {
+    writes.push(
+      prisma.appSetting.upsert({
+        where: { key: SETTINGS_KEYS.modelCv },
+        update: { value: payload.modelCv },
+        create: { key: SETTINGS_KEYS.modelCv, value: payload.modelCv },
+      }),
+    );
+  }
+
+  if (payload.modelMatcher) {
+    writes.push(
+      prisma.appSetting.upsert({
+        where: { key: SETTINGS_KEYS.modelMatcher },
+        update: { value: payload.modelMatcher },
+        create: { key: SETTINGS_KEYS.modelMatcher, value: payload.modelMatcher },
+      }),
+    );
+  }
+
+  if (payload.modelExplorer) {
+    writes.push(
+      prisma.appSetting.upsert({
+        where: { key: SETTINGS_KEYS.modelExplorer },
+        update: { value: payload.modelExplorer },
+        create: { key: SETTINGS_KEYS.modelExplorer, value: payload.modelExplorer },
       }),
     );
   }

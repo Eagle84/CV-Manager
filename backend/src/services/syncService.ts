@@ -840,13 +840,16 @@ export const runSync = async (): Promise<SyncResult> => {
         ? { ok: false, value: null, error: "Ollama skipped for this sync run after repeated timeouts" }
         : await (async () => {
           const aiStartedAt = Date.now();
-          const result = await extractWithOllama({
-            subject: parsed.subject,
-            body: bodyForInference,
-            fromEmail: parsed.fromEmail,
-            fromDisplayName: parsed.fromDisplayName,
-            senderDomain,
-          });
+          const result = await extractWithOllama(
+            {
+              subject: parsed.subject,
+              body: bodyForInference,
+              fromEmail: parsed.fromEmail,
+              fromDisplayName: parsed.fromDisplayName,
+              senderDomain,
+            },
+            { model: settings.modelEmail },
+          );
           aiLatencyMs = Date.now() - aiStartedAt;
           return result;
         })();
@@ -861,7 +864,7 @@ export const runSync = async (): Promise<SyncResult> => {
           gmailMessageId,
           latencyMs: aiLatencyMs,
           confidence: aiConfidence,
-          model: config.OLLAMA_MODEL,
+          model: settings.modelEmail,
         });
         if (!aiConfident) {
           logger.warn("Ollama confidence below threshold, using fallback", {

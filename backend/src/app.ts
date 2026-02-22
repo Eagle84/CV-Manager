@@ -22,16 +22,21 @@ import { completeFollowup, listFollowups } from "./services/followupService.js";
 import { rescheduleIfNeeded } from "./scheduler.js";
 import { getSettings, updateSettings } from "./services/settingsService.js";
 import { runSync } from "./services/syncService.js";
+import multer from "multer";
+import { listCvs, deleteCv, setDefaultCv, processCvUpload } from "./services/cvService.js";
+import { analyzeJobUrl, findMatchingJobsOnPage } from "./services/analyzerService.js";
+
+const upload = multer({ dest: "uploads/cvs" });
 
 const asyncHandler =
   <T extends express.RequestHandler>(handler: T): express.RequestHandler =>
-  async (req, res, next) => {
-    try {
-      await handler(req, res, next);
-    } catch (error) {
-      next(error);
-    }
-  };
+    async (req, res, next) => {
+      try {
+        await handler(req, res, next);
+      } catch (error) {
+        next(error);
+      }
+    };
 
 const patchApplicationSchema = z.object({
   companyName: z.string().optional(),
@@ -49,6 +54,10 @@ const settingsSchema = z.object({
   digestCron: z.string().optional(),
   followupAfterDays: z.coerce.number().int().min(1).max(60).optional(),
   syncLookbackDays: z.coerce.number().int().min(1).max(3650).optional(),
+  modelEmail: z.string().optional(),
+  modelCv: z.string().optional(),
+  modelMatcher: z.string().optional(),
+  modelExplorer: z.string().optional(),
 });
 
 const getAllowedFrontendOrigins = (frontendOrigin: string): Set<string> => {
@@ -307,6 +316,20 @@ export const createApp = (): express.Express => {
   );
 
   app.get(
+    "/api/ollama/models",
+    asyncHandler(async (_req, res) => {
+      try {
+        const response = await fetch(`${config.OLLAMA_BASE_URL}/api/tags`);
+        if (!response.ok) throw new Error("Failed to fetch models from Ollama");
+        const data = await response.json() as any;
+        res.json(data.models.map((m: any) => m.name));
+      } catch (err) {
+        res.json([]); // Return empty list on failure instead of error
+      }
+    }),
+  );
+
+  app.get(
     "/api/settings",
     asyncHandler(async (_req, res) => {
       const settings = await getSettings();
@@ -325,6 +348,68 @@ export const createApp = (): express.Express => {
       const updated = await updateSettings(payload);
       await rescheduleIfNeeded();
       res.json(updated);
+    }),
+  );
+
+  // --- CV Management ---
+
+  app.get(
+    "/api/cvs",
+    asyncHandler(async (_req, res) => {
+      const cvs = await listCvs();
+      res.json(cvs);
+    }),
+  );
+
+  app.post(
+    "/api/cvs",
+    upload.single("cv"),
+    asyncHandler(async (req, res) => {
+      if (!req.file) {
+        res.status(400).json({ error: "No file uploaded" });
+        return;
+      }
+
+      const cv = await processCvUpload(req.file.path, req.file.originalname, req.file.mimetype);
+      res.json(cv);
+    }),
+  );
+
+  app.delete(
+    "/api/cvs/:id",
+    asyncHandler(async (req, res) => {
+      const id = String(req.params.id);
+      await deleteCv(id);
+      res.json({ ok: true });
+    }),
+  );
+
+  app.patch(
+    "/api/cvs/:id/default",
+    asyncHandler(async (req, res) => {
+      const id = String(req.params.id);
+      await setDefaultCv(id);
+      res.json({ ok: true });
+    }),
+  );
+
+  // --- Job Analysis ---
+
+  app.post(
+    "/api/analyze/url",
+    asyncHandler(async (req, res) => {
+      const { url } = z.object({ url: z.string().url() }).parse(req.body);
+      const result = await analyzeJobUrl(url);
+      res.json(result);
+    }),
+  );
+
+  app.post(
+    "/api/analyze/explore",
+    asyncHandler(async (req, res) => {
+      const { url } = z.object({ url: z.string().url() }).parse(req.body);
+      const result = await findMatchingJobsOnPage(url);
+      res.json(result);
     }),
   );
 

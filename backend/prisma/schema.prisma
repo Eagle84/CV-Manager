@@ -89,6 +89,9 @@ model Application {
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @updatedAt
 
+  cvId                String?
+  cv                  CV?               @relation(fields: [cvId], references: [id], onDelete: SetNull)
+
   events              ApplicationEvent[]
   emails              EmailMessage[]
   followups           FollowupTask[]
@@ -96,6 +99,22 @@ model Application {
   @@unique([groupSenderDomain, groupSubjectKey])
   @@index([companyDomain, normalizedRoleTitle])
   @@index([status, lastActivityAt])
+  @@index([cvId])
+}
+
+model CV {
+  id              String   @id @default(cuid())
+  filename        String
+  filePath        String
+  fileType        String
+  extractedText   String?
+  skills          String?
+  summary         String?
+  isDefault       Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  applications    Application[]
 }
 
 model ApplicationEvent {

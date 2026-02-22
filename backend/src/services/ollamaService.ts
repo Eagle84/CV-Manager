@@ -22,7 +22,22 @@ const ollamaExtractionSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
+const cvExtractionSchema = z.object({
+  skills: z.array(z.string()),
+  summary: z.string().nullable(),
+  rolePrimary: z.string().nullable(),
+});
+
+const jobMatchingSchema = z.object({
+  matchScore: z.number().min(0).max(100),
+  matchingSkills: z.array(z.string()),
+  missingSkills: z.array(z.string()),
+  advice: z.string(),
+});
+
 export type OllamaExtraction = z.infer<typeof ollamaExtractionSchema>;
+export type CvExtraction = z.infer<typeof cvExtractionSchema>;
+export type JobMatching = z.infer<typeof jobMatchingSchema>;
 
 export interface OllamaExtractionInput {
   subject: string;
@@ -65,19 +80,21 @@ export const normalizeSubjectForGroup = (subject: string): string => {
   return normalized.split(" ").slice(0, 12).join("-");
 };
 
-const extractJsonCandidate = (text: string): string | null => {
-  const trimmed = text.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    return trimmed;
+export const extractJsonCandidate = (text: string): string | null => {
+  // Strip DeepSeek/Reasoning <think>...</think> blocks if present
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+
+  if (cleaned.startsWith("{") && cleaned.endsWith("}")) {
+    return cleaned;
   }
 
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
     return null;
   }
 
-  return trimmed.slice(start, end + 1);
+  return cleaned.slice(start, end + 1);
 };
 
 const buildPrompt = (input: OllamaExtractionInput): string => {
@@ -108,7 +125,10 @@ const buildPrompt = (input: OllamaExtractionInput): string => {
   ].join("\n");
 };
 
-const callOllama = async (input: OllamaExtractionInput): Promise<OllamaGenerateResponse> => {
+const callOllama = async (
+  model: string,
+  prompt: string,
+): Promise<OllamaGenerateResponse> => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.OLLAMA_TIMEOUT_MS);
 
@@ -117,8 +137,8 @@ const callOllama = async (input: OllamaExtractionInput): Promise<OllamaGenerateR
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: config.OLLAMA_MODEL,
-        prompt: buildPrompt(input),
+        model,
+        prompt,
         stream: false,
         format: "json",
         options: {
@@ -140,6 +160,7 @@ const callOllama = async (input: OllamaExtractionInput): Promise<OllamaGenerateR
 
 export const extractWithOllama = async (
   input: OllamaExtractionInput,
+  overrides?: { model?: string },
 ): Promise<OllamaExtractionResult> => {
   if (!config.OLLAMA_ENABLED) {
     return {
@@ -149,10 +170,13 @@ export const extractWithOllama = async (
     };
   }
 
+  const model = overrides?.model || config.OLLAMA_MODEL;
+  const prompt = buildPrompt(input);
+
   let lastError = "Unknown Ollama error";
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await callOllama(input);
+      const response = await callOllama(model, prompt);
       const raw = String(response.response ?? "").trim();
       const candidate = extractJsonCandidate(raw);
       if (!candidate) {
@@ -183,4 +207,112 @@ export const extractWithOllama = async (
     value: null,
     error: lastError,
   };
+};
+
+export const extractCvWithOllama = async (text: string, overrides?: { model?: string }): Promise<CvExtraction | null> => {
+  if (!config.OLLAMA_ENABLED) return null;
+
+  const model = overrides?.model || config.OLLAMA_MODEL;
+  const controller = new AbortController();
+  console.log(`[Ollama] Timeout set to: ${config.OLLAMA_TIMEOUT_MS}ms. Using model: ${model}`);
+  const timeout = setTimeout(() => controller.abort(), config.OLLAMA_TIMEOUT_MS);
+
+  try {
+    console.log(`[Ollama] Extracting CV...`);
+    const response = await fetch(`${config.OLLAMA_BASE_URL}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt: `Analyze this CV text and provide the analysis in the following JSON format ONLY:
+{
+  "skills": ["skill1", "skill2", ...],
+  "summary": "Full summary text here",
+  "rolePrimary": "Job Title"
+}
+
+Text: ${text.slice(0, 10000)}`,
+        stream: false,
+        // format: "json", // Disabled for better DeepSeek-R1 compatibility
+        options: { temperature: 0.1 },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      console.error(`[Ollama] Request failed with status: ${response.status}`);
+      return null;
+    }
+    const body = await response.json() as any;
+    const raw = String(body.response ?? "").trim();
+    console.log(`[Ollama] Received response (${raw.length} chars)`);
+
+    const candidate = extractJsonCandidate(raw);
+    if (!candidate) {
+      console.error("[Ollama] Could not find JSON block in response. Raw response snippet:", raw.slice(0, 500));
+      return null;
+    }
+
+    try {
+      const parsed = JSON.parse(candidate);
+      const validated = cvExtractionSchema.safeParse(parsed);
+      if (!validated.success) {
+        console.error("[Ollama] Validation failed for JSON:", candidate);
+        console.error("[Ollama] Errors:", validated.error.format());
+        return null;
+      }
+      return validated.data;
+    } catch (err: any) {
+      console.error(`[Ollama] JSON Parse Error: ${err.message}. Block was:`, candidate);
+      return null;
+    }
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      console.error(`[Ollama] Request aborted due to timeout (${config.OLLAMA_TIMEOUT_MS}ms)`);
+    } else {
+      console.error(`[Ollama] Unexpected error: ${err.message}`);
+    }
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+export const matchJobWithCv = async (targetJob: string, cvText: string, overrides?: { model?: string }): Promise<JobMatching | null> => {
+  if (!config.OLLAMA_ENABLED) return null;
+
+  const model = overrides?.model || config.OLLAMA_MODEL;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.OLLAMA_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(`${config.OLLAMA_BASE_URL}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt: `Compare this job description with my CV. Return a matchScore (0-100), matchingSkills, missingSkills (things mentioned in job but not in cv), and specific advice on how to proceed.
+Job Description: ${targetJob.slice(0, 8000)}
+My CV: ${cvText.slice(0, 8000)}
+Return ONLY JSON.`,
+        stream: false,
+        format: "json",
+        options: { temperature: 0 },
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body = await response.json() as any;
+    const raw = String(body.response ?? "").trim();
+    const candidate = extractJsonCandidate(raw);
+    if (!candidate) return null;
+    const parsed = JSON.parse(candidate);
+    const validated = jobMatchingSchema.safeParse(parsed);
+    return validated.success ? validated.data : null;
+  } catch (err: any) {
+    console.error(`[Ollama] Job Match failed: ${err.message}`);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 };

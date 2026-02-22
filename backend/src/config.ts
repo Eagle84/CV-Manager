@@ -1,4 +1,8 @@
 import "dotenv/config";
+import path from "path";
+import dotenv from "dotenv";
+dotenv.config({ path: path.resolve(process.cwd(), ".env") });
+dotenv.config({ path: path.resolve(process.cwd(), "backend", ".env") }); // Also check subfolder if run from root
 import { z } from "zod";
 
 const envSchema = z.object({
