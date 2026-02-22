@@ -3,7 +3,7 @@ import type { ApplicationDetail, ApplicationSummary, DashboardSummary, Duplicate
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8787",
-  timeout: 30000,
+  timeout: 60000,
 });
 
 export interface FollowupItem {
@@ -241,6 +241,7 @@ export const apiClient = {
     formData.append("cv", file);
     const response = await api.post<CvDto>("/api/cvs", formData, {
       headers: { "Content-Type": "multipart/form-data" },
+      timeout: 300000, // 5 mins
     });
     return response.data;
   },
@@ -251,11 +252,11 @@ export const apiClient = {
     await api.patch(`/api/cvs/${id}/default`);
   },
   analyzeJobUrl: async (url: string): Promise<JobAnalysisResult> => {
-    const response = await api.post<JobAnalysisResult>("/api/analyze/url", { url });
+    const response = await api.post<JobAnalysisResult>("/api/analyze/url", { url }, { timeout: 300000 });
     return response.data;
   },
   exploreJobsOnPage: async (url: string): Promise<{ title: string; url: string; reasoning: string }[]> => {
-    const response = await api.post<{ title: string; url: string; reasoning: string }[]>("/api/analyze/explore", { url });
+    const response = await api.post<{ title: string; url: string; reasoning: string }[]>("/api/analyze/explore", { url }, { timeout: 600000 });
     return response.data;
   },
 };

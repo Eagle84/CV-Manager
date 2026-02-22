@@ -34,7 +34,7 @@ export const CVsPage = () => {
             await apiClient.uploadCv(file);
             await loadData();
         } catch (err) {
-            setError("Failed to upload CV. Make sure it is a PDF or Docx.");
+            setError("Failed to upload CV. If it's a large file, the AI might still be analyzing it—try refreshing the dashboard in a minute.");
         } finally {
             setUploading(false);
         }
