@@ -105,9 +105,26 @@ export const ApplicationsPage = () => {
         hasNotes,
         manualOnly,
       });
-      setItems(result);
-      if (result.length && !selectedId) {
-        setSelectedId(result[0].id);
+      // Filter out applications that are not real job applications (e.g., meetups, events, unknown-role)
+      const filteredItems = result.filter((item) => {
+        const title = item.roleTitle?.toLowerCase() || "";
+        const company = item.companyName?.toLowerCase() || "";
+        if (
+          title.includes("meetup") ||
+          title.includes("event") ||
+          title.includes("thank you") ||
+          title.includes("unknown-role") ||
+          company.includes("meetup") ||
+          company.includes("event") ||
+          company.includes("thank you")
+        ) {
+          return false;
+        }
+        return true;
+      });
+      setItems(filteredItems);
+      if (filteredItems.length && !selectedId) {
+        setSelectedId(filteredItems[0].id);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load applications");

@@ -48,6 +48,32 @@ const FOCUS_FALLBACK = "thanks for applying";
 const FOCUS_ALTERNATE = "thank you for applying";
 const FOCUS_INTEREST = "thank you for your interest";
 const FOCUS_GENERIC = "thank you for";
+// Well-known Applicant Tracking System (ATS) sender domains.
+// When the sender domain is an ATS, the email "From" display name
+// (e.g. "CyberArk") is the actual employer and must be trusted as the
+// company name even if it contains no typical company-name hint words.
+const ATS_DOMAINS = new Set([
+  "smartrecruiters.com",
+  "greenhouse.io",
+  "lever.co",
+  "workday.com",
+  "myworkdayjobs.com",
+  "icims.com",
+  "taleo.net",
+  "jobvite.com",
+  "successfactors.com",
+  "bamboohr.com",
+  "recruitee.com",
+  "workable.com",
+  "applytojob.com",
+  "myworkday.com",
+  "ultipro.com",
+  "paylocity.com",
+  "silkroad.com",
+  "cornerstone.com",
+  "kenexa.com",
+  "brassring.com",
+]);
 const MAX_BODY_FOR_FALLBACK = 5000;
 const GENERIC_DISPLAY_NAMES = new Set([
   "noreply",
@@ -65,6 +91,48 @@ const GENERIC_DISPLAY_NAMES = new Set([
   "hiring team",
   "do not reply",
   "donotreply",
+]);
+// Sender domains that are NEVER job-application emails.
+// These produce false positives when focus terms appear in their content
+// (e.g. Microsoft auth codes, Airbnb T&C, newsletter platforms, etc.).
+const NOISE_DOMAINS = new Set([
+  // Microsoft
+  "accountprotection.microsoft.com",
+  "microsoft.com",
+  "account.microsoft.com",
+  "live.com",
+  "hotmail.com",
+  "outlook.com",
+  // Google / Gmail
+  "gmail.com",
+  "accounts.google.com",
+  "google.com",
+  // Travel / Consumer
+  "airbnb.com",
+  "booking.com",
+  "expedia.com",
+  "uber.com",
+  // Event / Newsletter platforms
+  "email.meetup.com",
+  "meetup.com",
+  "eventbrite.com",
+  "mailchimp.com",
+  "constantcontact.com",
+  "sendgrid.net",
+  "klaviyo.com",
+  // Social
+  "facebookmail.com",
+  "twitter.com",
+  "instagram.com",
+  "tiktok.com",
+  // E-commerce
+  "amazon.com",
+  "ebay.com",
+  "etsy.com",
+  "aliexpress.com",
+  // Payment
+  "paypal.com",
+  "stripe.com",
 ]);
 const ROLE_HINTS = [
   "engineer",
@@ -146,6 +214,10 @@ const sanitizeCompanyName = (value: string): string => {
 
 const sanitizeRoleTitle = (value: string): string => cleanValue(value);
 
+// Returns true when the sender domain belongs to a known ATS (Applicant
+// Tracking System). In those cases the email display name is the real company.
+const isAtsDomain = (domain: string): boolean => ATS_DOMAINS.has(domain.toLowerCase().trim());
+
 const hasInvalidFragment = (value: string): boolean => {
   const lowered = value.toLowerCase();
   return INVALID_TEXT_FRAGMENTS.some((fragment) => lowered.includes(fragment));
@@ -210,6 +282,17 @@ const stripHtml = (html: string): string =>
 const subjectContainsFocus = (subject: string, focusTerms: string[]): boolean => {
   const normalized = cleanValue(subject).toLowerCase();
   return focusTerms.some((focus) => normalized.includes(cleanValue(focus).toLowerCase()));
+};
+
+// Full-text match: checks subject first, then falls back to body.
+// This lets emails whose subject doesn't contain focus keywords but
+// whose body does (e.g. SmartRecruiters/CyberArk acknowledgments) pass through.
+const containsFocus = (subject: string, body: string, focusTerms: string[]): boolean => {
+  if (subjectContainsFocus(subject, focusTerms)) {
+    return true;
+  }
+  const normalizedBody = cleanValue(body).toLowerCase();
+  return focusTerms.some((focus) => normalizedBody.includes(cleanValue(focus).toLowerCase()));
 };
 
 const parseFocusedSubjectCandidates = (
@@ -299,7 +382,7 @@ const isCompanyMentionedInSubject = (subject: string, companyName: string): bool
   return companyComparable.length >= 3 && subjectComparable.includes(companyComparable);
 };
 
-const extractSenderCompany = (displayName: string): string => {
+const extractSenderCompany = (displayName: string, senderDomain?: string): string => {
   const normalized = sanitizeCompanyName(displayName);
   if (!normalized) {
     return "";
@@ -308,6 +391,17 @@ const extractSenderCompany = (displayName: string): string => {
   if (GENERIC_DISPLAY_NAMES.has(normalized.toLowerCase())) {
     return "";
   }
+
+  // When the email comes from a known ATS (e.g. smartrecruiters.com, greenhouse.io)
+  // the display name IS the actual employer — trust it unconditionally as long as
+  // it's not a generic word and doesn't look like a role title.
+  if (senderDomain && isAtsDomain(senderDomain)) {
+    if (!GENERIC_DISPLAY_NAMES.has(normalized.toLowerCase()) && !looksLikeRoleTitle(normalized)) {
+      return normalized;
+    }
+    return "";
+  }
+
   if (!looksLikeCompanyName(normalized)) {
     return "";
   }
@@ -414,10 +508,14 @@ const clampLookbackDays = (days: number): number => {
 };
 
 const buildFocusedQuery = (focusTerms: string[], lookbackDays: number): string => {
+  // Use full-text search (no `subject:` prefix) so that emails whose focus
+  // keywords appear in the body — not just the subject — are also fetched.
+  // Example: SmartRecruiters/CyberArk sends "Thank you for considering" in
+  // the body while using a subject like "Your application at CyberArk".
   const escapedTerms = focusTerms
     .map((focus) => cleanValue(focus))
     .filter(Boolean)
-    .map((focus) => `subject:"${focus.replace(/"/g, '\\"')}"`);
+    .map((focus) => `"${focus.replace(/"/g, '\\"')}"`);
 
   const lookup = escapedTerms.length > 1 ? `(${escapedTerms.join(" OR ")})` : escapedTerms[0];
   return `${lookup} newer_than:${clampLookbackDays(lookbackDays)}d`;
@@ -504,11 +602,20 @@ const resolveCompanyIdentity = (input: {
     };
   }
 
-  const senderDerived = extractSenderCompany(input.fromDisplayName);
+  // Pass senderDomain so ATS domains (smartrecruiters.com, greenhouse.io, …)
+  // are handled: the display name (e.g. "CyberArk") is used as company name
+  // and the domain is resolved from AI or inferred from the display name —
+  // NOT from the ATS domain itself.
+  const senderDerived = extractSenderCompany(input.fromDisplayName, normalizedSenderDomain);
   if (senderDerived) {
+    // For ATS senders the sender domain is the ATS's domain, not the company's.
+    // Prefer the AI-extracted domain; fall back to inferring from the company name.
+    const resolvedDomain = isAtsDomain(normalizedSenderDomain)
+      ? normalizedAiCompanyDomain || normalizeDomain(inferCompanyNameFromDomain(normalizedSenderDomain))
+      : normalizedSenderDomain || normalizedAiCompanyDomain;
     return {
       companyName: senderDerived,
-      companyDomain: normalizedSenderDomain || normalizedAiCompanyDomain,
+      companyDomain: resolvedDomain || normalizedSenderDomain,
       source: "sender",
     };
   }
@@ -701,7 +808,12 @@ export const runSync = async (): Promise<SyncResult> => {
         message.internalDate ?? null,
       );
 
-      if (!subjectContainsFocus(parsed.subject, focusTerms)) {
+      // Extract body first so it can be used in the focus check.
+      // Emails like CyberArk/SmartRecruiters put "thank you for considering"
+      // in the body, not the subject — we need to check both.
+      const bodyForInference = getBodyForInference(parsed.bodyText, parsed.bodyHtml);
+
+      if (!containsFocus(parsed.subject, bodyForInference, focusTerms)) {
         continue;
       }
 
@@ -711,7 +823,13 @@ export const runSync = async (): Promise<SyncResult> => {
         continue;
       }
 
-      const bodyForInference = getBodyForInference(parsed.bodyText, parsed.bodyHtml);
+      // Reject emails from domains that never send job-application emails:
+      // Microsoft auth codes, Airbnb T&C, Meetup events, own digest (gmail.com), etc.
+      if (NOISE_DOMAINS.has(senderDomain)) {
+        logger.info("Skipping email from noise domain", { gmailMessageId, senderDomain, subject: parsed.subject });
+        continue;
+      }
+
       const subjectCandidates = parseFocusedSubjectCandidates(parsed.subject);
       const classifier = classifyEmailContent(parsed.subject, bodyForInference);
       const fallbackStatus =
@@ -721,17 +839,17 @@ export const runSync = async (): Promise<SyncResult> => {
       const aiResult = skipAiForRun
         ? { ok: false, value: null, error: "Ollama skipped for this sync run after repeated timeouts" }
         : await (async () => {
-            const aiStartedAt = Date.now();
-            const result = await extractWithOllama({
-              subject: parsed.subject,
-              body: bodyForInference,
-              fromEmail: parsed.fromEmail,
-              fromDisplayName: parsed.fromDisplayName,
-              senderDomain,
-            });
-            aiLatencyMs = Date.now() - aiStartedAt;
-            return result;
-          })();
+          const aiStartedAt = Date.now();
+          const result = await extractWithOllama({
+            subject: parsed.subject,
+            body: bodyForInference,
+            fromEmail: parsed.fromEmail,
+            fromDisplayName: parsed.fromDisplayName,
+            senderDomain,
+          });
+          aiLatencyMs = Date.now() - aiStartedAt;
+          return result;
+        })();
 
       const aiValue = aiResult.ok ? aiResult.value : null;
       const aiConfidence = aiValue?.confidence ?? 0;

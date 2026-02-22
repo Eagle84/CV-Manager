@@ -22,8 +22,48 @@ export const DashboardPage = () => {
         apiClient.fetchDashboard(),
         apiClient.fetchFollowups(),
       ]);
-      setSummary(dashboard);
-      setFollowups(tasks.slice(0, 8));
+      // Filter out recentApplications that are clearly not job applications (meetup/event noise).
+      // NOTE: "unknown-role" is intentionally NOT filtered here — it means the role title
+      // couldn't be extracted from the email, but it can still be a real application (e.g. CyberArk).
+      const filteredRecentApplications = (dashboard.recentApplications ?? []).filter((item) => {
+        const title = item.roleTitle?.toLowerCase() || "";
+        const company = item.companyName?.toLowerCase() || "";
+        if (
+          title.includes("meetup") ||
+          title.includes("event") ||
+          title.includes("thank you") ||
+          company.includes("meetup") ||
+          company.includes("event") ||
+          company.includes("thank you")
+        ) {
+          return false;
+        }
+        return true;
+      });
+      setSummary({ ...dashboard, recentApplications: filteredRecentApplications });
+      // Filter out followups that are clearly not real job applications.
+      // NOTE: "unknown-role" is intentionally NOT filtered — real applications
+      // (e.g. CyberArk via SmartRecruiters) may have an unparsed role title.
+      const filteredTasks = tasks.filter((task) => {
+        const title = task.application.roleTitle?.toLowerCase() || "";
+        const reason = task.reason?.toLowerCase() || "";
+        const company = task.application.companyName?.toLowerCase() || "";
+        if (
+          title.includes("meetup") ||
+          title.includes("event") ||
+          title.includes("thank you") ||
+          reason.includes("meetup") ||
+          reason.includes("event") ||
+          reason.includes("thank you") ||
+          company.includes("meetup") ||
+          company.includes("event") ||
+          company.includes("thank you")
+        ) {
+          return false;
+        }
+        return true;
+      });
+      setFollowups(filteredTasks.slice(0, 8));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dashboard");
     } finally {
