@@ -26,7 +26,7 @@ const envSchema = z.object({
   OLLAMA_ENABLED: z.coerce.boolean().default(true),
   OLLAMA_BASE_URL: z.string().url().default("http://127.0.0.1:11434"),
   OLLAMA_MODEL: z.string().default("llama31_16k:latest"),
-  OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+  OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
   OLLAMA_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.7),
 });
 

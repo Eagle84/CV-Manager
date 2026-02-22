@@ -10,6 +10,7 @@ export const SETTINGS_KEYS = {
   modelCv: "model_cv",
   modelMatcher: "model_matcher",
   modelExplorer: "model_explorer",
+  modelClassification: "model_classification",
 } as const;
 
 export interface AppSettings {
@@ -21,6 +22,7 @@ export interface AppSettings {
   modelCv: string;
   modelMatcher: string;
   modelExplorer: string;
+  modelClassification: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -32,6 +34,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   modelCv: config.OLLAMA_MODEL,
   modelMatcher: config.OLLAMA_MODEL,
   modelExplorer: config.OLLAMA_MODEL,
+  modelClassification: config.OLLAMA_MODEL,
 };
 
 export const ensureDefaultSettings = async (): Promise<void> => {
@@ -44,6 +47,7 @@ export const ensureDefaultSettings = async (): Promise<void> => {
     [SETTINGS_KEYS.modelCv, DEFAULT_SETTINGS.modelCv],
     [SETTINGS_KEYS.modelMatcher, DEFAULT_SETTINGS.modelMatcher],
     [SETTINGS_KEYS.modelExplorer, DEFAULT_SETTINGS.modelExplorer],
+    [SETTINGS_KEYS.modelClassification, DEFAULT_SETTINGS.modelClassification],
   ];
 
   for (const [key, value] of defaults) {
@@ -68,6 +72,7 @@ export const getSettings = async (): Promise<AppSettings> => {
           SETTINGS_KEYS.modelCv,
           SETTINGS_KEYS.modelMatcher,
           SETTINGS_KEYS.modelExplorer,
+          SETTINGS_KEYS.modelClassification,
         ],
       },
     },
@@ -84,6 +89,7 @@ export const getSettings = async (): Promise<AppSettings> => {
     modelCv: map.get(SETTINGS_KEYS.modelCv) ?? DEFAULT_SETTINGS.modelCv,
     modelMatcher: map.get(SETTINGS_KEYS.modelMatcher) ?? DEFAULT_SETTINGS.modelMatcher,
     modelExplorer: map.get(SETTINGS_KEYS.modelExplorer) ?? DEFAULT_SETTINGS.modelExplorer,
+    modelClassification: map.get(SETTINGS_KEYS.modelClassification) ?? DEFAULT_SETTINGS.modelClassification,
   };
 };
 
@@ -160,12 +166,12 @@ export const updateSettings = async (payload: Partial<AppSettings>): Promise<App
     );
   }
 
-  if (payload.modelExplorer) {
+  if (payload.modelClassification) {
     writes.push(
       prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.modelExplorer },
-        update: { value: payload.modelExplorer },
-        create: { key: SETTINGS_KEYS.modelExplorer, value: payload.modelExplorer },
+        where: { key: SETTINGS_KEYS.modelClassification },
+        update: { value: payload.modelClassification },
+        create: { key: SETTINGS_KEYS.modelClassification, value: payload.modelClassification },
       }),
     );
   }

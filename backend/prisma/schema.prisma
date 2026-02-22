@@ -168,3 +168,14 @@ model AppSetting {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model TargetCompany {
+  id        String   @id @default(cuid())
+  name      String
+  url       String   @unique
+  industry  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt(sort: Desc)])
+}

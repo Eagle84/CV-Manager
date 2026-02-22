@@ -83,6 +83,7 @@ export interface SettingsDto {
   modelCv: string;
   modelMatcher: string;
   modelExplorer: string;
+  modelClassification: string;
 }
 
 export interface SyncResponse {
@@ -218,6 +219,7 @@ export const apiClient = {
     modelCv?: string;
     modelMatcher?: string;
     modelExplorer?: string;
+    modelClassification?: string;
   }): Promise<SettingsDto> => {
     const response = await api.patch<SettingsDto>("/api/settings", payload);
     return response.data;
@@ -282,8 +284,34 @@ export const apiClient = {
     const response = await api.post<{ batchId: string }>("/api/analyze/batch", { items });
     return response.data;
   },
+  importTargetCompanies: async (items: { url: string; company?: string }[]): Promise<{ count: number }> => {
+    const response = await api.post<{ count: number }>("/api/analyze/import", { items });
+    return response.data;
+  },
   getBatchStatus: async (batchId: string): Promise<BatchJob> => {
     const response = await api.get<BatchJob>(`/api/analyze/batch/${batchId}`);
     return response.data;
   },
+  fetchTargetCompanies: async (page: number = 1, limit: number = 10, search?: string): Promise<TargetCompanyListResponse> => {
+    const response = await api.get<TargetCompanyListResponse>("/api/analyze/target-companies", {
+      params: { page, limit, search },
+    });
+    return response.data;
+  },
 };
+
+export interface TargetCompanyDto {
+  id: string;
+  name: string;
+  url: string;
+  industry?: string;
+  createdAt: string;
+}
+
+export interface TargetCompanyListResponse {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  items: TargetCompanyDto[];
+}

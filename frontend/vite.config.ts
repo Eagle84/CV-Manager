@@ -10,6 +10,7 @@ export default defineConfig({
   },
   plugins: [react()],
   server: {
-    allowedHosts: ["df8e-87-71-162-43.ngrok-free.app"],
+    host: '0.0.0.0',
+    allowedHosts: ["cvmanager.hopto.org"],
   },
 });

@@ -24,7 +24,7 @@ import { getSettings, updateSettings } from "./services/settingsService.js";
 import { runSync } from "./services/syncService.js";
 import multer from "multer";
 import { listCvs, deleteCv, setDefaultCv, processCvUpload } from "./services/cvService.js";
-import { analyzeJobUrl, findMatchingJobsOnPage } from "./services/analyzerService.js";
+import { analyzeJobUrl, findMatchingJobsOnPage, listTargetCompanies, saveTargetCompanies } from "./services/analyzerService.js";
 import { randomUUID } from "crypto";
 
 interface BatchItem {
@@ -77,10 +77,15 @@ const settingsSchema = z.object({
   modelCv: z.string().optional(),
   modelMatcher: z.string().optional(),
   modelExplorer: z.string().optional(),
+  modelClassification: z.string().optional(),
 });
 
 const getAllowedFrontendOrigins = (frontendOrigin: string): Set<string> => {
-  const allowedOrigins = new Set<string>([frontendOrigin]);
+  const allowedOrigins = new Set<string>([
+    frontendOrigin,
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+  ]);
   const parsed = new URL(frontendOrigin);
 
   if (parsed.hostname === "127.0.0.1") {
@@ -432,6 +437,29 @@ export const createApp = (): express.Express => {
     }),
   );
 
+  app.get(
+    "/api/analyze/target-companies",
+    asyncHandler(async (req, res) => {
+      const page = parseInt(String(req.query.page || "1"));
+      const limit = parseInt(String(req.query.limit || "10"));
+      const search = req.query.search ? String(req.query.search) : undefined;
+      const result = await listTargetCompanies(page, limit, search);
+      res.json(result);
+    }),
+  );
+
+  app.post(
+    "/api/analyze/import",
+    asyncHandler(async (req, res) => {
+      const itemsSchema = z.array(z.object({ url: z.string().url(), company: z.string().optional() }));
+      const { items } = z.object({ items: itemsSchema }).parse(req.body);
+
+      // Only persist to DB, do not start background analysis
+      const result = await saveTargetCompanies(items.map(it => ({ name: it.company || "Unknown Company", url: it.url })));
+      res.json({ count: result.length });
+    }),
+  );
+
   app.post(
     "/api/analyze/batch",
     asyncHandler(async (req, res) => {
@@ -450,6 +478,13 @@ export const createApp = (): express.Express => {
 
       // Sequential processing loop (not awaited)
       (async () => {
+        // Persist these to DB in background so we don't block the UI
+        try {
+          await saveTargetCompanies(items.map(it => ({ name: it.company || "Unknown Company", url: it.url })));
+        } catch (err) {
+          console.error("Failed to save target companies in background:", err);
+        }
+
         for (const item of job.items) {
           item.status = "running";
           try {

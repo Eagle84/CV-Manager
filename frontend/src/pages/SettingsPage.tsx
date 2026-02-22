@@ -67,6 +67,7 @@ export const SettingsPage = () => {
   const [modelCv, setModelCv] = useState("");
   const [modelMatcher, setModelMatcher] = useState("");
   const [modelExplorer, setModelExplorer] = useState("");
+  const [modelClassification, setModelClassification] = useState("");
 
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [message, setMessage] = useState<{ text: string; type: 'ok' | 'error' } | null>(null);
@@ -84,6 +85,7 @@ export const SettingsPage = () => {
     setModelCv(response.modelCv);
     setModelMatcher(response.modelMatcher);
     setModelExplorer(response.modelExplorer);
+    setModelClassification(response.modelClassification);
 
     const parsedPoll = parsePollCron(response.pollCron);
     const parsedDigest = parseDigestCron(response.digestCron);
@@ -136,7 +138,8 @@ export const SettingsPage = () => {
       modelEmail,
       modelCv,
       modelMatcher,
-      modelExplorer
+      modelExplorer,
+      modelClassification
     });
     syncUiFromSettings(updated);
     setMessage({ text: "Settings saved successfully!", type: 'ok' });
@@ -231,6 +234,16 @@ export const SettingsPage = () => {
             <select value={modelExplorer} onChange={(e) => setModelExplorer(e.target.value)} disabled={busy} style={{ width: '100%' }}>
               {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
               {!ollamaModels.includes(modelExplorer) && modelExplorer && <option value={modelExplorer}>{modelExplorer} (Current)</option>}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
+              Company Classifier <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Industry categorization)</small>
+            </label>
+            <select value={modelClassification} onChange={(e) => setModelClassification(e.target.value)} disabled={busy} style={{ width: '100%' }}>
+              {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+              {!ollamaModels.includes(modelClassification) && modelClassification && <option value={modelClassification}>{modelClassification} (Current)</option>}
             </select>
           </div>
         </div>

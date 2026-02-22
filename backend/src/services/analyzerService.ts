@@ -3,6 +3,7 @@ import { matchJobWithCv, extractJsonCandidate } from "./ollamaService.js";
 import { getDefaultCv } from "./cvService.js";
 import { getSettings } from "./settingsService.js";
 import { config } from "../config.js";
+import { prisma } from "../lib/prisma.js";
 
 export const scrapeJobDescription = async (url: string): Promise<string> => {
     try {
@@ -87,12 +88,21 @@ export const findMatchingJobsOnPage = async (pageUrl: string) => {
     const $ = cheerio.load(html);
 
     const links: { title: string; url: string }[] = [];
+    const jobKeywords = ["/jobs/", "/job/", "/careers/", "/career/", "view-job", "application", "position", "opening", "listing"];
+    const roleKeywords = ["engineer", "developer", "manager", "specialist", "analyst", "lead", "designer", "architect", "consultant"];
+
     $("a").each((_, el) => {
         const href = $(el).attr("href");
         const text = $(el).text().trim();
-        if (href && (href.includes("/jobs/") || href.includes("/job/") || href.includes("/careers/") || href.includes("view-job"))) {
+        const lowerHref = (href || "").toLowerCase();
+        const lowerText = text.toLowerCase();
+
+        if (href && (
+            jobKeywords.some(k => lowerHref.includes(k)) ||
+            roleKeywords.some(k => lowerText.includes(k))
+        )) {
             try {
-                links.push({ title: text, url: new URL(href, pageUrl).toString() });
+                links.push({ title: text || "Untitled Position", url: new URL(href, pageUrl).toString() });
             } catch { }
         }
     });
@@ -103,25 +113,153 @@ export const findMatchingJobsOnPage = async (pageUrl: string) => {
     const prompt = `Based on my CV summary: ${cv.summary}\n\nPick the top 3 most relevant job links from this list for someone with these skills: ${cv.skills}.\n\nLinks:\n${links.slice(0, 30).map(l => `- ${l.title}: ${l.url}`).join("\n")}\n\nReturn ONLY JSON as an array of {title, url, reasoning}.`;
 
     const settings = await getSettings();
-    const aiResp = await fetch(`${config.OLLAMA_BASE_URL}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            model: settings.modelExplorer,
-            prompt,
-            stream: false,
-            format: "json",
-        }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), config.OLLAMA_TIMEOUT_MS);
 
-    if (!aiResp.ok) return [];
-    const body = await aiResp.json() as any;
     try {
+        const aiResp = await fetch(`${config.OLLAMA_BASE_URL}/api/generate`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                model: settings.modelExplorer,
+                prompt,
+                stream: false,
+                format: "json",
+            }),
+            signal: controller.signal,
+        });
+
+        if (!aiResp.ok) {
+            console.error(`[Ollama] Explorer search failed with status: ${aiResp.status}`);
+            return [];
+        }
+
+        const body = await aiResp.json() as any;
         const raw = String(body.response ?? "").trim();
         const candidate = extractJsonCandidate(raw);
-        if (!candidate) return [];
+        if (!candidate) {
+            console.error("[Ollama] Explorer returned no JSON candidate. Raw:", raw.slice(0, 300));
+            return [];
+        }
         return JSON.parse(candidate) as { title: string; url: string; reasoning: string }[];
-    } catch {
+    } catch (err: any) {
+        if (err.name === 'AbortError') {
+            console.error(`[Ollama] Explorer timed out after ${config.OLLAMA_TIMEOUT_MS}ms`);
+        } else {
+            console.error(`[Ollama] Explorer error:`, err.message);
+        }
         return [];
+    } finally {
+        clearTimeout(timeout);
     }
+};
+
+export const classifyCompany = async (companyName: string, url: string): Promise<string> => {
+    try {
+        const settings = await getSettings(); //
+        const prompt = `Classify the industry of this company based on its name and URL. 
+Return ONLY a short category (e.g., "Cyber", "Fintech", "Healthcare", "E-commerce", "SaaS", "Automotive", "Retail", "Aviation").
+Company Name: ${companyName}
+URL: ${url}
+Category:`; //
+
+        const response = await fetch(`${config.OLLAMA_BASE_URL}/api/generate`, {
+            method: "POST", //
+            headers: { "Content-Type": "application/json" }, //
+            body: JSON.stringify({
+                model: settings.modelClassification, //
+                prompt, //
+                stream: false, //
+                options: { temperature: 0.1 }, //
+            }),
+        });
+
+        if (!response.ok) return "Unknown"; //
+        
+        const body = await response.json() as any; //
+        return (body.response ?? "Unknown").trim().replace(/[^a-zA-Z-\s]/g, ""); //
+    } catch (err: any) {
+        // Detailed logging for the ECONNREFUSED error you encountered
+        if (err.code === 'ECONNREFUSED') {
+            console.error(`[Ollama] Connection refused at ${config.OLLAMA_BASE_URL}. Is the service running?`); //
+        } else {
+            console.error("Classification error:", err); //
+        }
+        return "Unknown"; //
+    }
+};
+
+export const saveTargetCompanies = async (items: { name: string; url: string }[]) => {
+    const CHUNK_SIZE = 100;
+    const results: any[] = [];
+
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+        const chunk = items.slice(i, i + CHUNK_SIZE);
+        await prisma.$transaction(async (tx: any) => {
+            for (const item of chunk) {
+                if (!item.url) continue;
+                try {
+                    const saved = await tx.targetCompany.upsert({
+                        where: { url: item.url },
+                        update: { name: item.name || "Unknown Company" },
+                        create: { name: item.name || "Unknown Company", url: item.url },
+                    });
+                    results.push(saved);
+
+                    // Trigger classification in background if industry is missing
+                    if (!saved.industry) {
+                        // Use a slight delay to avoid SQLite locking during the active transaction
+                        setTimeout(async () => {
+                            try {
+                                const industry = await classifyCompany(saved.name, saved.url);
+                                if (industry && industry !== "Unknown") {
+                                    await prisma.targetCompany.update({
+                                        where: { id: saved.id },
+                                        data: { industry },
+                                    });
+                                }
+                            } catch (err) {
+                                console.error(`[Background] Failed to classify ${saved.name}:`, err);
+                            }
+                        }, 500 + i);
+                    }
+                } catch (err) {
+                    console.error(`Failed to save company ${item.name}:`, err);
+                }
+            }
+        }, {
+            maxWait: 20000, // 20s
+            timeout: 60000,  // 60s
+        });
+    }
+    return results;
+};
+
+export const listTargetCompanies = async (page: number = 1, limit: number = 10, search?: string) => {
+    const skip = (page - 1) * limit;
+    const where = search ? {
+        OR: [
+            { name: { contains: search } },
+            { url: { contains: search } },
+            { industry: { contains: search } },
+        ]
+    } : {};
+
+    const [total, items] = await Promise.all([
+        (prisma as any).targetCompany.count({ where }),
+        (prisma as any).targetCompany.findMany({
+            where,
+            orderBy: { createdAt: "desc" },
+            skip,
+            take: limit,
+        }),
+    ]);
+
+    return {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        items,
+    };
 };

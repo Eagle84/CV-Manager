@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { apiClient, type JobAnalysisResult, type BatchJob } from "../lib/api.ts";
+import { apiClient, type JobAnalysisResult, type BatchJob, type TargetCompanyDto } from "../lib/api.ts";
 
 const STORAGE_KEYS = {
     URL: "job_matcher_url",
@@ -10,9 +10,6 @@ const STORAGE_KEYS = {
 const getScoreColor = (score: number) =>
     score >= 75 ? "var(--safe)" : score >= 50 ? "var(--accent-2)" : "var(--danger)";
 
-const getScoreLabel = (score: number) =>
-    score >= 75 ? "Strong Match" : score >= 50 ? "Fair Match" : "Low Match";
-
 interface CsvRow {
     url: string;
     company: string;
@@ -20,7 +17,7 @@ interface CsvRow {
 }
 
 export const JobMatcherPage = () => {
-    const [activeSubTab, setActiveSubTab] = useState<'match' | 'discover' | 'batch'>('match');
+    const [activeSubTab, setActiveSubTab] = useState<'batch' | 'match' | 'discover'>('batch');
 
     // Single Analysis State
     const [url, setUrl] = useState(() => localStorage.getItem(STORAGE_KEYS.URL) || "");
@@ -36,12 +33,43 @@ export const JobMatcherPage = () => {
     const [error, setError] = useState<string | null>(null);
 
     // Batch Analysis State
+    const [showImporter, setShowImporter] = useState(false);
     const [csvRows, setCsvRows] = useState<CsvRow[]>([]);
     const [detectedCols, setDetectedCols] = useState<{ url: string; company: string | null } | null>(null);
     const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
     const [batchJob, setBatchJob] = useState<BatchJob | null>(null);
-    const [csvSearch, setCsvSearch] = useState("");
+    const [csvPage, setCsvPage] = useState(1);
+    const [batchPage, setBatchPage] = useState(1);
+    const ITEMS_PER_PAGE = 10;
     const pollInterval = useRef<number | null>(null);
+
+    // History Pagination State
+    const [targetCompanies, setTargetCompanies] = useState<TargetCompanyDto[]>([]);
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(0);
+    const [historyLoading, setHistoryLoading] = useState(false);
+    const [searchTerm, setSearchTerm] = useState("");
+
+    const loadHistory = async (p: number, search?: string) => {
+        setHistoryLoading(true);
+        try {
+            const resp = await apiClient.fetchTargetCompanies(p, ITEMS_PER_PAGE, search);
+            setTargetCompanies(resp.items);
+            setTotalPages(resp.totalPages);
+            setPage(resp.page);
+        } catch (err) {
+            console.error("Failed to load history:", err);
+        } finally {
+            setHistoryLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            loadHistory(1, searchTerm);
+        }, 400);
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
 
     // Persistence Effects
     useEffect(() => {
@@ -68,6 +96,7 @@ export const JobMatcherPage = () => {
                     if (status.status === "done") {
                         if (pollInterval.current) clearInterval(pollInterval.current);
                         pollInterval.current = null;
+                        loadHistory(1); // Refresh library after batch
                     }
                 } catch (err) {
                     console.error("Polling error:", err);
@@ -88,7 +117,8 @@ export const JobMatcherPage = () => {
         setDetectedCols(null);
         setActiveBatchId(null);
         setBatchJob(null);
-        setCsvSearch("");
+        setCsvPage(1);
+        setBatchPage(1);
         localStorage.removeItem(STORAGE_KEYS.URL);
         localStorage.removeItem(STORAGE_KEYS.RESULT);
         localStorage.removeItem(STORAGE_KEYS.DISCOVERED);
@@ -108,10 +138,8 @@ export const JobMatcherPage = () => {
 
             const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
 
-            // Column Detection
             let urlIdx = -1;
             let companyIdx = -1;
-
             const urlKeywords = ["url", "link", "careers", "career_page", "website"];
             const compKeywords = ["company", "name", "organization", "employer"];
 
@@ -122,17 +150,13 @@ export const JobMatcherPage = () => {
             });
 
             if (urlIdx === -1) {
-                setError("Could not detect a URL/Link column. Please ensure your CSV has a header like 'URL' or 'Link'.");
+                setError("Could not detect a URL column.");
                 return;
             }
 
-            setDetectedCols({
-                url: headers[urlIdx],
-                company: companyIdx !== -1 ? headers[companyIdx] : null
-            });
+            setDetectedCols({ url: headers[urlIdx], company: companyIdx !== -1 ? headers[companyIdx] : null });
 
             const rows: CsvRow[] = lines.slice(1).map(line => {
-                // Simple CSV splitter (doesn't handle commas in quotes perfectly, but sufficient for URLs)
                 const cells = line.split(",").map(c => c.trim().replace(/^"|"$/g, ""));
                 return {
                     url: cells[urlIdx] || "",
@@ -158,35 +182,38 @@ export const JobMatcherPage = () => {
         setCsvRows(csvRows.map(r => ({ ...r, selected: !allSelected })));
     };
 
-    const startBatch = async () => {
+    const importCompanies = async () => {
         const selectedItems = csvRows.filter(r => r.selected).map(r => ({ url: r.url, company: r.company }));
         if (selectedItems.length === 0) return;
 
         try {
             setLoading(true);
             setError(null);
-            const { batchId } = await apiClient.startBatchAnalysis(selectedItems);
-            setActiveBatchId(batchId);
-            setBatchJob(null);
+            await apiClient.importTargetCompanies(selectedItems);
+            setShowImporter(false);
+            loadHistory(1); // Refresh library
         } catch (err: any) {
-            setError(err.message || "Failed to start batch analysis");
+            setError(err.message || "Failed to import companies");
         } finally {
             setLoading(false);
         }
     };
 
-    const handleAction = async (mode: 'analyze' | 'explore') => {
-        if (!url) return;
+    const handleAction = async (mode: 'analyze' | 'explore', targetUrl?: string) => {
+        const finalUrl = targetUrl || url;
+        if (!finalUrl) return;
         try {
             setLoading(true);
             setError(null);
             if (mode === 'analyze') {
-                const data = await apiClient.analyzeJobUrl(url);
+                const data = await apiClient.analyzeJobUrl(finalUrl);
                 setResult(data);
+                setUrl(finalUrl);
                 setActiveSubTab('match');
             } else {
-                const data = await apiClient.exploreJobsOnPage(url);
+                const data = await apiClient.exploreJobsOnPage(finalUrl);
                 setDiscoveredJobs(data);
+                setUrl(finalUrl);
                 setActiveSubTab('discover');
             }
         } catch (err) {
@@ -205,9 +232,9 @@ export const JobMatcherPage = () => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                     <div style={{ display: 'flex', gap: '0.4rem', background: 'var(--stroke)', padding: '0.3rem', borderRadius: '14px' }}>
                         {[
-                            { id: 'match', label: '🚀 Match Analysis', icon: '🎯' },
-                            { id: 'discover', label: '🔍 Opportunity Finder', icon: '🔎' },
-                            { id: 'batch', label: '📊 CSV Batch', icon: '📁' }
+                            { id: 'batch', label: '📂 Company Library' },
+                            { id: 'match', label: '🚀 Match Analysis' },
+                            { id: 'discover', label: '🔍 Opportunity Finder' },
                         ].map(t => (
                             <button
                                 key={t.id}
@@ -222,287 +249,228 @@ export const JobMatcherPage = () => {
 
                     {(result || discoveredJobs || url || csvRows.length > 0 || batchJob) && (
                         <button onClick={clearData} className="button-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>
-                            🧹 Reset Agent State
+                            Reset Agent
                         </button>
                     )}
                 </div>
 
-                {activeSubTab === 'match' && (
-                    <div>
-                        <p className="panel-help" style={{ marginBottom: '1rem' }}>
-                            Paste a specific job URL to get a detailed match analysis against your profile.
-                        </p>
-                        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                            <input
-                                type="url"
-                                placeholder="https://company.com/careers/software-engineer"
-                                value={url}
-                                onChange={(e) => setUrl(e.target.value)}
-                                style={{ flex: 1, minWidth: '300px' }}
-                            />
-                            <button onClick={() => handleAction('analyze')} disabled={loading || !url}>
-                                {loading ? "Analyzing..." : "🚀 Analyze Job"}
-                            </button>
+                {activeSubTab === 'batch' && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                            <h2 style={{ margin: 0, fontSize: '1.2rem' }}>Target Company Library</h2>
+                            <p className="panel-help" style={{ margin: 0 }}>Browse your saved career portals.</p>
                         </div>
+                        <button className="button" onClick={() => setShowImporter(!showImporter)}>
+                            {showImporter ? "✖ Close Importer" : "📁 Import CSV"}
+                        </button>
+                    </div>
+                )}
+
+                {activeSubTab === 'match' && (
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                        <input type="url" placeholder="Paste job URL..." value={url} onChange={(e) => setUrl(e.target.value)} style={{ flex: 1, minWidth: '300px' }} />
+                        <button onClick={() => handleAction('analyze')} disabled={loading || !url}>{loading ? "Analyzing..." : "🚀 Analyze Job"}</button>
                     </div>
                 )}
 
                 {activeSubTab === 'discover' && (
-                    <div>
-                        <p className="panel-help" style={{ marginBottom: '1rem' }}>
-                            Paste a careers portal URL. The agent will discover and highlight the best active roles for you.
-                        </p>
-                        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                            <input
-                                type="url"
-                                placeholder="https://google.com/careers"
-                                value={url}
-                                onChange={(e) => setUrl(e.target.value)}
-                                style={{ flex: 1, minWidth: '300px' }}
-                            />
-                            <button onClick={() => handleAction('explore')} disabled={loading || !url} className="button-secondary">
-                                {loading ? "Discovering..." : "🔍 Find Matches"}
-                            </button>
-                        </div>
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                        <input type="url" placeholder="Paste careers portal URL..." value={url} onChange={(e) => setUrl(e.target.value)} style={{ flex: 1, minWidth: '300px' }} />
+                        <button onClick={() => handleAction('explore')} disabled={loading || !url} className="button-secondary">{loading ? "Discovering..." : "🔍 Find Matches"}</button>
                     </div>
                 )}
 
-                {activeSubTab === 'batch' && (
-                    <div>
-                        <p className="panel-help" style={{ marginBottom: '1rem' }}>
-                            Process multiple job links at once by uploading a CSV file.
-                        </p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                            <label className="button-secondary" style={{ cursor: 'pointer', margin: 0 }}>
-                                📁 Choose CSV File
-                                <input type="file" accept=".csv" onChange={handleCsvUpload} style={{ display: 'none' }} />
-                            </label>
-                            {detectedCols ? (
-                                <span style={{ fontSize: '0.85rem', color: 'var(--safe)' }}>
-                                    ✅ Detected "{detectedCols.url}" column
-                                </span>
-                            ) : (
-                                <span style={{ fontSize: '0.85rem', opacity: 0.6 }}>Supports: url, link, careers...</span>
-                            )}
-                        </div>
-                    </div>
-                )}
                 {error && <p className="error-text" style={{ marginTop: '1rem' }}>{error}</p>}
             </section>
 
             {/* ── Main Workspace ── */}
             <main style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
 
-                {/* TAB: MATCH ANALYSIS */}
-                {activeSubTab === 'match' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                        {/* Single Analysis Result */}
-                        {result ? (
-                            <>
-                                <section id="full-result" className="panel highlighted" style={{ borderTop: `4px solid ${getScoreColor(result.analysis.matchScore)}` }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <div>
-                                            <p className="eyebrow" style={{ color: getScoreColor(result.analysis.matchScore) }}>{getScoreLabel(result.analysis.matchScore)}</p>
-                                            <h2 style={{ margin: 0, fontSize: '2rem' }}>{result.analysis.matchScore}% Match</h2>
-                                        </div>
-                                        <a href={result.url} target="_blank" rel="noreferrer" className="button-secondary">Open Posting</a>
-                                    </div>
-                                    <div style={{ marginTop: '1.5rem', padding: '1rem', borderLeft: '4px solid var(--accent)', background: 'var(--stroke)', borderRadius: '0 8px 8px 0' }}>
-                                        <p style={{ margin: 0, lineHeight: 1.6 }}>{result.analysis.advice}</p>
-                                    </div>
-                                </section>
-
-                                <article className="panel">
-                                    <h3>💪 Key Strengths</h3>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
-                                        {(result.analysis.strengths?.length > 0
-                                            ? result.analysis.strengths
-                                            : result.analysis.matchingSkills.slice(0, 5)
-                                        ).map(s => (
-                                            <span key={s} className="chip">{s}</span>
-                                        ))}
-                                        {(result.analysis.strengths?.length === 0 && result.analysis.matchingSkills.length === 0) && <p className="panel-help">No specific strengths identified.</p>}
-                                    </div>
-                                </article>
-
-                                <article className="panel">
-                                    <h3>⭐ Over-Qualifications</h3>
-                                    {result.analysis.overqualifiedSkills?.length > 0 ? (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
-                                            {result.analysis.overqualifiedSkills.map(s => (
-                                                <span key={s} className="chip" style={{ color: '#3b82f6' }}>{s}</span>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <p className="panel-help">Matched exactly for all critical requirements.</p>
-                                    )}
-                                </article>
-
-                                <article className="panel">
-                                    <h3>⚠️ Knowledge Gaps</h3>
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
-                                        {result.analysis.missingSkills.map(s => (
-                                            <span key={s} className="chip" style={{ color: 'var(--danger)' }}>{s}</span>
-                                        ))}
-                                        {result.analysis.missingSkills.length === 0 && <p>Full match! You have all requested skills.</p>}
-                                    </div>
-                                </article>
-
-                                <section className="panel">
-                                    <details>
-                                        <summary style={{ cursor: 'pointer', opacity: 0.6 }}>View Scraped Text</summary>
-                                        <pre style={{ whiteSpace: 'pre-wrap', fontSize: '0.8rem', marginTop: '1rem', maxHeight: '300px', overflowY: 'auto' }}>{result.jdSnippet}</pre>
-                                    </details>
-                                </section>
-                            </>
-                        ) : (
-                            <p style={{ textAlign: 'center', opacity: 0.5, marginTop: '2rem' }}>No analysis performed yet. Paste a link above to begin.</p>
-                        )}
-                    </div>
-                )}
-
-                {activeSubTab === 'discover' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                        {/* Discovered List */}
-                        {discoveredJobs ? (
-                            Array.isArray(discoveredJobs) ? (
-                                <section className="panel">
-                                    <h2>Discovered Opportunities</h2>
-                                    <div className="stats-highlight-grid" style={{ gridTemplateColumns: '1fr', marginTop: '1rem' }}>
-                                        {discoveredJobs.map((job) => (
-                                            <article key={job.url} className="panel highlighted" style={{ margin: 0 }}>
-                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                                    <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{job.title}</h3>
-                                                    <button className="button-secondary" style={{ padding: '0.3rem 0.6rem' }} onClick={() => { setUrl(job.url); handleAction('analyze'); }}>Analyze</button>
-                                                </div>
-                                                <p style={{ fontSize: '0.9rem', marginTop: '0.5rem', opacity: 0.8 }}>{job.reasoning}</p>
-                                                <a href={job.url} target="_blank" rel="noreferrer" style={{ fontSize: '0.85rem', marginTop: '0.5rem', display: 'block' }}>View Posting ↗</a>
-                                            </article>
-                                        ))}
-                                        {discoveredJobs.length === 0 && <p>No specific jobs found. Is this a direct job posting? Use 'Match Analysis' instead.</p>}
-                                    </div>
-                                </section>
-                            ) : (
-                                <section className="panel">
-                                    <h2>Agent Feedback</h2>
-                                    <p>The agent returned a message instead of a job list:</p>
-                                    <pre className="panel-help" style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(discoveredJobs, null, 2)}</pre>
-                                </section>
-                            )
-                        ) : (
-                            <p style={{ textAlign: 'center', opacity: 0.5, marginTop: '2rem' }}>No discovery exploration performed yet. Use the explorer above.</p>
-                        )}
-                    </div>
-                )}
-
                 {activeSubTab === 'batch' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                        {/* CSV Table or Active Batch */}
-                        {csvRows.length > 0 && (
-                            <section className="panel">
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                                    <h2>CSV Selection ({selectedCount} items)</h2>
-                                    <div style={{ display: 'flex', gap: '0.8rem' }}>
-                                        <input
-                                            placeholder="Filter list..."
-                                            value={csvSearch}
-                                            onChange={e => setCsvSearch(e.target.value)}
-                                            style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', width: '180px' }}
-                                        />
-                                        <button className="button" disabled={selectedCount === 0 || loading} onClick={startBatch}>
-                                            {loading ? "Starting..." : `🚀 Run Batch Analysis`}
-                                        </button>
-                                    </div>
+
+                        <div style={{ display: 'flex', gap: '1rem' }}>
+                            <input
+                                type="text"
+                                placeholder="🔍 Search companies..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                style={{ flex: 1 }}
+                            />
+                        </div>
+
+                        {showImporter && (
+                            <section className="panel highlighted">
+                                <h3>Step 1: Upload CSV</h3>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem' }}>
+                                    <label className="button-secondary" style={{ cursor: 'pointer', margin: 0 }}>
+                                        📁 Choose CSV File
+                                        <input type="file" accept=".csv" onChange={handleCsvUpload} style={{ display: 'none' }} />
+                                    </label>
+                                    {detectedCols && <span style={{ color: 'var(--safe)', fontSize: '0.9rem' }}>✅ Detected "{detectedCols.url}"</span>}
                                 </div>
-                                <div className="table-wrap">
-                                    <table>
-                                        <thead>
-                                            <tr>
-                                                <th style={{ width: '40px' }}><input type="checkbox" checked={csvRows.length > 0 && csvRows.every(r => r.selected)} onChange={toggleAll} /></th>
-                                                <th style={{ width: '25%' }}>Company</th>
-                                                <th>URL</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            {csvRows
-                                                .filter(row =>
-                                                    !csvSearch ||
-                                                    row.company?.toLowerCase().includes(csvSearch.toLowerCase()) ||
-                                                    row.url.toLowerCase().includes(csvSearch.toLowerCase())
-                                                )
-                                                .map((row, idx) => (
-                                                    <tr key={idx}>
-                                                        <td><input type="checkbox" checked={row.selected} onChange={() => toggleRow(idx)} /></td>
-                                                        <td>{row.company}</td>
-                                                        <td style={{ fontSize: '0.85rem', opacity: 0.7, wordBreak: 'break-all' }}>{row.url}</td>
+
+                                {csvRows.length > 0 && (
+                                    <div style={{ marginTop: '1rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                            <h4>Detected {csvRows.length} rows ({selectedCount} selected)</h4>
+                                            <button className="button" disabled={selectedCount === 0 || loading} onClick={importCompanies}>{loading ? "Importing..." : "📁 Import"}</button>
+                                        </div>
+                                        <div className="table-wrap" style={{ maxHeight: '400px' }}>
+                                            <table>
+                                                <thead>
+                                                    <tr>
+                                                        <th style={{ width: '40px' }}><input type="checkbox" checked={csvRows.length > 0 && csvRows.every(r => r.selected)} onChange={toggleAll} /></th>
+                                                        <th>Company</th>
+                                                        <th>URL</th>
                                                     </tr>
-                                                ))}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                </thead>
+                                                <tbody>
+                                                    {csvRows.slice((csvPage - 1) * ITEMS_PER_PAGE, csvPage * ITEMS_PER_PAGE).map((row, idx) => (
+                                                        <tr key={idx}>
+                                                            <td><input type="checkbox" checked={row.selected} onChange={() => toggleRow((csvPage - 1) * ITEMS_PER_PAGE + idx)} /></td>
+                                                            <td>{row.company}</td>
+                                                            <td style={{ opacity: 0.6, fontSize: '0.8rem' }}>{row.url}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        {csvRows.length > ITEMS_PER_PAGE && (
+                                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1rem' }}>
+                                                <button className="button-secondary" disabled={csvPage === 1} onClick={() => setCsvPage(csvPage - 1)}>←</button>
+                                                <span>{csvPage} / {Math.ceil(csvRows.length / ITEMS_PER_PAGE)}</span>
+                                                <button className="button-secondary" disabled={csvPage === Math.ceil(csvRows.length / ITEMS_PER_PAGE)} onClick={() => setCsvPage(csvPage + 1)}>→</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </section>
                         )}
 
                         {(activeBatchId || batchJob) && (
                             <section className="panel highlighted">
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                                    <div>
-                                        <h2 style={{ margin: 0 }}>Batch Results Processing</h2>
-                                        <p className="panel-help">Progress: {batchJob?.progress.done} / {batchJob?.progress.total}</p>
-                                    </div>
-                                    <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
-                                        <input
-                                            placeholder="Search batch results..."
-                                            value={csvSearch}
-                                            onChange={e => setCsvSearch(e.target.value)}
-                                            style={{ fontSize: '0.8rem', padding: '0.3rem 0.6rem', width: '200px' }}
-                                        />
-                                        {batchJob?.status === "running" ? <div className="spinner"></div> : <span className="chip chip-received">Finished</span>}
-                                    </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                                    <h3>Batch Status ({batchJob?.progress.done || 0} / {batchJob?.progress.total || 0})</h3>
                                 </div>
-
                                 <div className="table-wrap">
                                     <table>
                                         <thead>
                                             <tr>
-                                                <th>Company / Link</th>
+                                                <th>Company</th>
                                                 <th style={{ textAlign: 'center' }}>Score</th>
-                                                <th style={{ textAlign: 'center' }}>Status</th>
                                                 <th style={{ textAlign: 'right' }}>Action</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {[...(batchJob?.items || [])]
-                                                .filter(item =>
-                                                    !csvSearch ||
-                                                    item.company?.toLowerCase().includes(csvSearch.toLowerCase()) ||
-                                                    item.url.toLowerCase().includes(csvSearch.toLowerCase())
-                                                )
-                                                .sort((a, b) => (b.result?.analysis?.matchScore || 0) - (a.result?.analysis?.matchScore || 0)).map((item, idx) => (
-                                                    <tr key={idx}>
-                                                        <td style={{ fontWeight: 600 }}>{item.company} <br /><small style={{ opacity: 0.5, fontWeight: 400, wordBreak: 'break-all' }}>{item.url}</small></td>
-                                                        <td style={{ textAlign: 'center' }}>
-                                                            {item.result?.analysis ? (
-                                                                <strong style={{ color: getScoreColor(item.result.analysis.matchScore) }}>{item.result.analysis.matchScore}%</strong>
-                                                            ) : "—"}
-                                                        </td>
-                                                        <td style={{ textAlign: 'center' }}><span className={`chip ${item.status}`}>{item.status}</span></td>
-                                                        <td style={{ textAlign: 'right' }}>
-                                                            {item.result && (
-                                                                <button className="button-secondary" style={{ padding: '0.2rem 0.5rem', fontSize: '0.75rem' }} onClick={() => { setResult(item.result!); setActiveSubTab('match'); }}>View</button>
-                                                            )}
-                                                        </td>
-                                                    </tr>
-                                                ))}
+                                            {batchJob?.items.slice((batchPage - 1) * ITEMS_PER_PAGE, batchPage * ITEMS_PER_PAGE).map((it, idx) => (
+                                                <tr key={idx}>
+                                                    <td>{it.company}<br /><small style={{ opacity: 0.5 }}>{it.url}</small></td>
+                                                    <td style={{ textAlign: 'center' }}>
+                                                        {it.result ? <strong style={{ color: getScoreColor(it.result.analysis.matchScore) }}>{it.result.analysis.matchScore}%</strong> : <span className={`chip ${it.status}`}>{it.status}</span>}
+                                                    </td>
+                                                    <td style={{ textAlign: 'right' }}>
+                                                        {it.result && <button className="button-secondary" onClick={() => { setResult(it.result!); setActiveSubTab('match'); }}>View</button>}
+                                                    </td>
+                                                </tr>
+                                            ))}
                                         </tbody>
                                     </table>
                                 </div>
+                                {batchJob && batchJob.items.length > ITEMS_PER_PAGE && (
+                                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1rem' }}>
+                                        <button className="button-secondary" disabled={batchPage === 1} onClick={() => setBatchPage(batchPage - 1)}>←</button>
+                                        <span>{batchPage} / {Math.ceil(batchJob.items.length / ITEMS_PER_PAGE)}</span>
+                                        <button className="button-secondary" disabled={batchPage === Math.ceil(batchJob.items.length / ITEMS_PER_PAGE)} onClick={() => setBatchPage(batchPage + 1)}>→</button>
+                                    </div>
+                                )}
                             </section>
                         )}
 
-                        {csvRows.length === 0 && !activeBatchId && !batchJob && (
-                            <p style={{ textAlign: 'center', opacity: 0.5, marginTop: '2rem' }}>Upload a CSV file to begin batch analysis.</p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.5rem' }}>
+                            {targetCompanies.length > 0 ? targetCompanies.map(c => (
+                                <details key={c.id} className="panel" style={{ margin: 0, padding: '1rem', background: 'var(--stroke)', borderRadius: '16px' }}>
+                                    <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <h3 style={{ margin: 0, fontSize: '1rem' }}>{c.name}</h3>
+                                                {c.industry && (
+                                                    <div style={{ marginTop: '0.4rem' }}>
+                                                        <span style={{
+                                                            fontSize: '0.75rem',
+                                                            padding: '0.2rem 0.6rem',
+                                                            background: 'var(--accent-1)',
+                                                            color: 'var(--bg-main)',
+                                                            borderRadius: '12px',
+                                                            fontWeight: '700',
+                                                            textTransform: 'uppercase'
+                                                        }}>
+                                                            💼 {c.industry}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                <p className="panel-help" style={{ margin: 0, fontSize: '0.75rem', opacity: 0.5 }}>Added {new Date(c.createdAt).toLocaleDateString()}</p>
+                                            </div>
+                                            <span>▼</span>
+                                        </div>
+                                    </summary>
+                                    <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                                        <p style={{ fontSize: '0.8rem', opacity: 0.6, marginBottom: '0.8rem' }}>{c.url}</p>
+                                        <div style={{ display: 'flex', gap: '0.6rem' }}>
+                                            <button className="button" style={{ width: '100%' }} onClick={() => handleAction('explore', c.url)}>🔎 Explore Company</button>
+                                        </div>
+                                    </div>
+                                </details>
+                            )) : !historyLoading && (
+                                <p style={{ gridColumn: '1 / -1', textAlign: 'center', opacity: 0.4, padding: '4rem' }}>Library is empty. Import a CSV to start.</p>
+                            )}
+                        </div>
+
+                        {totalPages > 1 && (
+                            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '2rem', marginTop: '2rem' }}>
+                                <button className="button-secondary" disabled={page === 1} onClick={() => loadHistory(page - 1, searchTerm)}>← Previous</button>
+                                <span>{page} / {totalPages}</span>
+                                <button className="button-secondary" disabled={page === totalPages} onClick={() => loadHistory(page + 1, searchTerm)}>Next →</button>
+                            </div>
                         )}
+                    </div>
+                )}
+
+                {activeSubTab === 'match' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                        {result ? (
+                            <>
+                                <section id="full-result" className="panel highlighted" style={{ borderTop: `4px solid ${getScoreColor(result.analysis.matchScore)}` }}>
+                                    <h2>{result.analysis.matchScore}% Match</h2>
+                                    <p>{result.analysis.advice}</p>
+                                </section>
+                                <article className="panel"><h3>💪 Strengths</h3><div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{result.analysis.strengths.map(s => <span key={s} className="chip">{s}</span>)}</div></article>
+                                <article className="panel"><h3>⚠️ Gaps</h3><div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{result.analysis.missingSkills.map(s => <span key={s} className="chip" style={{ color: 'var(--danger)' }}>{s}</span>)}</div></article>
+                            </>
+                        ) : <p style={{ textAlign: 'center', opacity: 0.5 }}>Paste a link above.</p>}
+                    </div>
+                )}
+
+                {activeSubTab === 'discover' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                        {discoveredJobs ? (
+                            <section className="panel">
+                                <h2>Opportunities</h2>
+                                {discoveredJobs.length > 0 ? (
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.5rem' }}>
+                                        {discoveredJobs.map(job => (
+                                            <article key={job.url} className="panel highlighted">
+                                                <h4>{job.title}</h4>
+                                                <p style={{ fontSize: '0.85rem', opacity: 0.7 }}>{job.reasoning}</p>
+                                                <button className="button" style={{ width: '100%', marginTop: '1rem' }} onClick={() => handleAction('analyze', job.url)}>Analyze</button>
+                                            </article>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <p style={{ textAlign: 'center', opacity: 0.5, padding: '2rem' }}>No matching opportunities found on this page. Try a more specific careers portal link.</p>
+                                )}
+                            </section>
+                        ) : <p style={{ textAlign: 'center', opacity: 0.5 }}>Enter a careers URL.</p>}
                     </div>
                 )}
             </main>
