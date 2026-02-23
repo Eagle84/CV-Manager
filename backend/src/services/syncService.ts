@@ -5,7 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import {
   fetchInboxMessageIdsByQuery,
   fetchMessagesByIds,
-  getConnectedAccount,
+  listConnectedAccounts,
   updateAccountCheckpoint,
 } from "./gmailService.js";
 import { parseGmailMessagePayload } from "./emailParser.js";
@@ -477,15 +477,16 @@ const chunk = <T>(values: T[], size: number): T[][] => {
   return chunks;
 };
 
-const filterExistingMessageIds = async (messageIds: string[]): Promise<string[]> => {
+const filterExistingMessageIds = async (userEmail: string, messageIds: string[]): Promise<string[]> => {
   if (messageIds.length === 0) {
     return [];
   }
 
   const existing = new Set<string>();
   for (const batch of chunk(messageIds, 500)) {
-    const rows = await prisma.emailMessage.findMany({
+    const rows = await (prisma.emailMessage.findMany as any)({
       where: {
+        userEmail,
         gmailMessageId: {
           in: batch,
         },
@@ -509,34 +510,44 @@ const clampLookbackDays = (days: number): number => {
   return Math.min(3650, Math.max(1, Math.floor(days)));
 };
 
-const buildFocusedQuery = (focusTerms: string[], lookbackDays: number): string => {
-  // Use full-text search (no `subject:` prefix) so that emails whose focus
-  // keywords appear in the body — not just the subject — are also fetched.
-  // Example: SmartRecruiters/CyberArk sends "Thank you for considering" in
-  // the body while using a subject like "Your application at CyberArk".
+const buildFocusedQuery = (focusTerms: string[], fromDate?: string | null): string => {
   const escapedTerms = focusTerms
     .map((focus) => cleanValue(focus))
     .filter(Boolean)
     .map((focus) => `"${focus.replace(/"/g, '\\"')}"`);
 
   const lookup = escapedTerms.length > 1 ? `(${escapedTerms.join(" OR ")})` : escapedTerms[0];
-  return `${lookup} newer_than:${clampLookbackDays(lookbackDays)}d`;
+
+  if (fromDate) {
+    return `${lookup} after:${fromDate}`;
+  }
+
+  // Default fallback if no date set
+  return `${lookup} newer_than:90d`;
 };
 
-const createCutoffDate = (lookbackDays: number): Date => {
+const createCutoffDate = (fromDate?: string | null): Date => {
+  if (fromDate) {
+    const parsed = new Date(fromDate);
+    if (!isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
   const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - clampLookbackDays(lookbackDays));
+  cutoff.setDate(cutoff.getDate() - 90); // Default 90 days
   return cutoff;
 };
 
 const pruneOldTrackedData = async (
-  lookbackDays: number,
+  userEmail: string,
+  fromDate?: string | null,
 ): Promise<{ emailsDeleted: number; applicationsDeleted: number }> => {
-  const cutoff = createCutoffDate(lookbackDays);
+  const cutoff = createCutoffDate(fromDate);
 
   const [emailsResult, applicationsResult] = await prisma.$transaction([
-    prisma.emailMessage.deleteMany({
+    (prisma.emailMessage.deleteMany as any)({
       where: {
+        userEmail,
         OR: [
           { receivedAt: { lt: cutoff } },
           { sentAt: { lt: cutoff } },
@@ -546,8 +557,9 @@ const pruneOldTrackedData = async (
         ],
       },
     }),
-    prisma.application.deleteMany({
+    (prisma.application.deleteMany as any)({
       where: {
+        userEmail,
         lastActivityAt: {
           lt: cutoff,
         },
@@ -744,35 +756,55 @@ const sortByInternalDateAscending = <T extends { internalDate?: string | null }>
 
 const resolveFocusedMessageIds = async (
   account: GmailAccount,
-  lookbackDays: number,
+  fromDate?: string | null,
 ): Promise<{
   messageIds: string[];
   newestHistoryId: string | null;
   source: "history" | "full_scan" | "query";
 }> => {
   const focusTerms = getFocusTerms();
-  const query = buildFocusedQuery(focusTerms, lookbackDays);
+  const query = buildFocusedQuery(focusTerms, fromDate);
   return fetchInboxMessageIdsByQuery(account, query);
 };
 
 export const runSync = async (): Promise<SyncResult> => {
-  const stats = createBaseStats();
-  const account = await getConnectedAccount();
+  const totalStats = createBaseStats();
+  const accounts = await listConnectedAccounts();
 
-  if (!account) {
+  if (accounts.length === 0) {
     return {
       ok: false,
       reason: "No connected Gmail account",
-      stats,
+      stats: totalStats,
     };
   }
 
-  const settings = await getSettings();
-  const lookbackDays = clampLookbackDays(settings.syncLookbackDays);
-  const pruned = await pruneOldTrackedData(lookbackDays);
+  let lastReason = "";
+  for (const account of accounts) {
+    const result = await runSyncForAccount(account);
+    totalStats.scanned += result.stats.scanned;
+    totalStats.importedEmails += result.stats.importedEmails;
+    totalStats.applicationsCreatedOrUpdated += result.stats.applicationsCreatedOrUpdated;
+    totalStats.statusesUpdated += result.stats.statusesUpdated;
+    totalStats.needsReview += result.stats.needsReview;
+    totalStats.aiProcessed += result.stats.aiProcessed;
+    totalStats.aiFallbackUsed += result.stats.aiFallbackUsed;
+    totalStats.aiSkipped += result.stats.aiSkipped;
+    lastReason = result.reason ?? "";
+  }
+
+  return { ok: true, reason: lastReason, stats: totalStats };
+};
+
+const runSyncForAccount = async (account: GmailAccount): Promise<SyncResult> => {
+  const userEmail = account.email;
+  const stats = createBaseStats();
+
+  const settings = await getSettings(userEmail);
+  const pruned = await pruneOldTrackedData(userEmail, settings.syncFromDate);
   if (pruned.applicationsDeleted > 0 || pruned.emailsDeleted > 0) {
-    logger.info("Pruned tracked data outside sync lookback window", {
-      lookbackDays,
+    logger.info("Pruned tracked data outside sync window", {
+      fromDate: settings.syncFromDate,
       applicationsDeleted: pruned.applicationsDeleted,
       emailsDeleted: pruned.emailsDeleted,
     });
@@ -780,17 +812,17 @@ export const runSync = async (): Promise<SyncResult> => {
 
   const focusTerms = getFocusTerms();
   const focusLabel = focusTerms.join(" | ");
-  const focused = await resolveFocusedMessageIds(account, lookbackDays);
+  const focused = await resolveFocusedMessageIds(account, settings.syncFromDate);
   stats.scanned = focused.messageIds.length;
 
-  const unseenMessageIds = await filterExistingMessageIds(focused.messageIds);
+  const unseenMessageIds = await filterExistingMessageIds(userEmail, focused.messageIds);
 
   if (unseenMessageIds.length === 0) {
     await updateAccountCheckpoint(account.id, focused.newestHistoryId);
     return {
       ok: true,
       reason:
-        `No new focused emails found for subjects "${focusLabel}" in last ${lookbackDays} days` +
+        `No new focused emails found for subjects "${focusLabel}" since ${settings.syncFromDate || '90 days ago'}` +
         (pruned.applicationsDeleted > 0 || pruned.emailsDeleted > 0
           ? ` | pruned ${pruned.applicationsDeleted} applications and ${pruned.emailsDeleted} emails`
           : ""),
@@ -961,9 +993,10 @@ export const runSync = async (): Promise<SyncResult> => {
       const classification = aiConfident && aiValue?.status ? aiValue.status : classifier.predictedStatus;
       const eventAt = getMessageDate(parsed.internalDate);
 
-      const existingGroup = await prisma.application.findUnique({
+      const existingGroup = await (prisma.application.findUnique as any)({
         where: {
-          groupSenderDomain_groupSubjectKey: {
+          userEmail_groupSenderDomain_groupSubjectKey: {
+            userEmail,
             groupSenderDomain,
             groupSubjectKey,
           },
@@ -984,11 +1017,15 @@ export const runSync = async (): Promise<SyncResult> => {
         });
       }
 
-      const email = await prisma.emailMessage.upsert({
+      const email = await (prisma.emailMessage.upsert as any)({
         where: {
-          gmailMessageId,
+          userEmail_gmailMessageId: {
+            userEmail,
+            gmailMessageId,
+          },
         },
         create: {
+          userEmail,
           gmailMessageId,
           threadId: asText(message.threadId),
           direction: "inbound",
@@ -1036,6 +1073,7 @@ export const runSync = async (): Promise<SyncResult> => {
       });
 
       const application = await createOrUpdateApplicationFromEmail({
+        userEmail,
         companyDomain,
         roleTitle,
         groupSenderDomain,
@@ -1047,7 +1085,7 @@ export const runSync = async (): Promise<SyncResult> => {
         companyName,
         eventDetails: {
           focusSubjects: focusTerms,
-          lookbackDays,
+          fromDate: settings.syncFromDate,
           source: focused.source,
           companyResolutionSource: company.source,
           classifier,
@@ -1107,7 +1145,7 @@ export const runSync = async (): Promise<SyncResult> => {
     ok: true,
     reason: fetched.quotaLimited
       ? "Partial sync: Gmail API quota exceeded during message fetch"
-      : `Focused sync completed for subjects "${focusLabel}" in last ${lookbackDays} days`,
+      : `Focused sync completed for subjects "${focusLabel}" since ${settings.syncFromDate || '90 days ago'}`,
     stats,
   };
 };

@@ -6,6 +6,9 @@ A local-first monorepo that connects to your Gmail account, tracks job applicati
 - [Privacy Policy](PRIVACY.md)
 - [Terms of Service](TERMS.md)
 
+## Maintainer
+Created and maintained by **Igal Boguslavsky** ([igal.bogu@gmail.com](mailto:igal.bogu@gmail.com))
+
 ## Stack
 
 - Backend: Node.js + TypeScript + Express

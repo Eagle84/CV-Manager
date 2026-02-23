@@ -50,7 +50,6 @@ const toDigestCron = (timeValue: string): string => {
 };
 
 export const SettingsPage = () => {
-  const [settings, setSettings] = useState<SettingsDto | null>(null);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
 
   // Form State
@@ -60,7 +59,7 @@ export const SettingsPage = () => {
   const [digestCron, setDigestCron] = useState("0 9 * * *");
   const [advancedMode, setAdvancedMode] = useState(false);
   const [followupAfterDays, setFollowupAfterDays] = useState(7);
-  const [syncLookbackDays, setSyncLookbackDays] = useState(120);
+  const [syncFromDate, setSyncFromDate] = useState<string | null>(null);
 
   // AI Models State
   const [modelEmail, setModelEmail] = useState("");
@@ -76,9 +75,8 @@ export const SettingsPage = () => {
   const busy = pendingAction !== null;
 
   const syncUiFromSettings = (response: SettingsDto) => {
-    setSettings(response);
     setFollowupAfterDays(response.followupAfterDays);
-    setSyncLookbackDays(response.syncLookbackDays);
+    setSyncFromDate(response.syncFromDate);
     setPollCron(response.pollCron);
     setDigestCron(response.digestCron);
     setModelEmail(response.modelEmail);
@@ -134,7 +132,7 @@ export const SettingsPage = () => {
       pollCron: finalPollCron,
       digestCron: finalDigestCron,
       followupAfterDays,
-      syncLookbackDays,
+      syncFromDate,
       modelEmail,
       modelCv,
       modelMatcher,
@@ -153,100 +151,81 @@ export const SettingsPage = () => {
             <h1 style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>Configuration & LLM Registry</h1>
             <p className="panel-help">Manage your job search infrastructure, automation schedules, and AI models.</p>
           </div>
-          {pendingAction && <div className="spinner" style={{ width: '2rem', height: '2rem' }}></div>}
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            {pendingAction && <div className="spinner" style={{ width: '2rem', height: '2rem' }}></div>}
+          </div>
         </div>
 
         {error && <div className="error-text" style={{ padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '8px', marginTop: '1rem' }}>⚠️ {error}</div>}
         {message && <div className="ok-text" style={{ padding: '1rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px', marginTop: '1rem' }}>✅ {message.text}</div>}
       </section>
 
-      {/* Gmail Section */}
-      <section className="panel">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-          <span style={{ fontSize: '1.5rem' }}>📧</span>
-          <h2 style={{ margin: 0 }}>Gmail Connection</h2>
-        </div>
-        <div className="cv-grid" style={{ gridTemplateColumns: '1fr', gap: '1rem' }}>
-          <div className="panel highlighted" style={{ margin: 0 }}>
-            <p className="panel-help" style={{ marginBottom: '0.5rem' }}>Connected Account</p>
-            <code style={{ fontSize: '1.1rem', display: 'block', marginBottom: '1rem' }}>{settings?.connectedEmail || "Not connected"}</code>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button
-                onClick={() => handleAction("connect", async () => { window.location.href = await apiClient.getGoogleAuthUrl(); })}
-                disabled={busy}
-                style={{ flex: 1 }}
-              >
-                {settings?.connectedEmail ? "Change Account" : "Connect Gmail"}
-              </button>
-              {settings?.connectedEmail && (
-                <button className="button-secondary" onClick={() => handleAction("disconnect", async () => { await apiClient.disconnectGoogle(); load(); })} disabled={busy}>
-                  Disconnect
-                </button>
-              )}
+      {/* LLM Agents Configuration */}
+      <section className="panel" style={{ padding: 0 }}>
+        <details style={{ width: '100%' }}>
+          <summary style={{ padding: '1.5rem', cursor: 'pointer', listStyle: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <span style={{ fontSize: '1.5rem' }}>🧠</span>
+              <h2 style={{ margin: 0 }}>AI Agent Models</h2>
+            </div>
+            <span style={{ fontSize: '0.8rem', opacity: 0.5 }}>Click to show/hide models ▼</span>
+          </summary>
+          <div style={{ padding: '0 1.5rem 1.5rem 1.5rem' }}>
+            <p className="panel-help" style={{ marginBottom: '1.5rem' }}>Assign specific LLM models for each specialized task explorer.</p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              <div className="form-group">
+                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
+                  Email Extractor <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Status updates & dates)</small>
+                </label>
+                <select value={modelEmail} onChange={(e) => setModelEmail(e.target.value)} disabled={busy} style={{ width: '100%' }}>
+                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {!ollamaModels.includes(modelEmail) && modelEmail && <option value={modelEmail}>{modelEmail} (Current)</option>}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
+                  CV Processor <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Skills & summary extraction)</small>
+                </label>
+                <select value={modelCv} onChange={(e) => setModelCv(e.target.value)} disabled={busy} style={{ width: '100%' }}>
+                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {!ollamaModels.includes(modelCv) && modelCv && <option value={modelCv}>{modelCv} (Current)</option>}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
+                  Job Matcher <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Score & Matching analysis)</small>
+                </label>
+                <select value={modelMatcher} onChange={(e) => setModelMatcher(e.target.value)} disabled={busy} style={{ width: '100%' }}>
+                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {!ollamaModels.includes(modelMatcher) && modelMatcher && <option value={modelMatcher}>{modelMatcher} (Current)</option>}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
+                  Job Discovery <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Careers portal exploration)</small>
+                </label>
+                <select value={modelExplorer} onChange={(e) => setModelExplorer(e.target.value)} disabled={busy} style={{ width: '100%' }}>
+                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {!ollamaModels.includes(modelExplorer) && modelExplorer && <option value={modelExplorer}>{modelExplorer} (Current)</option>}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
+                  Company Classifier <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Industry categorization)</small>
+                </label>
+                <select value={modelClassification} onChange={(e) => setModelClassification(e.target.value)} disabled={busy} style={{ width: '100%' }}>
+                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
+                  {!ollamaModels.includes(modelClassification) && modelClassification && <option value={modelClassification}>{modelClassification} (Current)</option>}
+                </select>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* LLM Agents Configuration */}
-      <section className="panel">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-          <span style={{ fontSize: '1.5rem' }}>🧠</span>
-          <h2 style={{ margin: 0 }}>AI Agent Models</h2>
-        </div>
-        <p className="panel-help" style={{ marginBottom: '1.5rem' }}>Assign specific LLM models for each specialized task explorer.</p>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div className="form-group">
-            <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-              Email Extractor <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Status updates & dates)</small>
-            </label>
-            <select value={modelEmail} onChange={(e) => setModelEmail(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-              {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-              {!ollamaModels.includes(modelEmail) && modelEmail && <option value={modelEmail}>{modelEmail} (Current)</option>}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-              CV Processor <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Skills & summary extraction)</small>
-            </label>
-            <select value={modelCv} onChange={(e) => setModelCv(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-              {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-              {!ollamaModels.includes(modelCv) && modelCv && <option value={modelCv}>{modelCv} (Current)</option>}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-              Job Matcher <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Score & Matching analysis)</small>
-            </label>
-            <select value={modelMatcher} onChange={(e) => setModelMatcher(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-              {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-              {!ollamaModels.includes(modelMatcher) && modelMatcher && <option value={modelMatcher}>{modelMatcher} (Current)</option>}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-              Job Discovery <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Careers portal exploration)</small>
-            </label>
-            <select value={modelExplorer} onChange={(e) => setModelExplorer(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-              {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-              {!ollamaModels.includes(modelExplorer) && modelExplorer && <option value={modelExplorer}>{modelExplorer} (Current)</option>}
-            </select>
-          </div>
-
-          <div className="form-group">
-            <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-              Company Classifier <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Industry categorization)</small>
-            </label>
-            <select value={modelClassification} onChange={(e) => setModelClassification(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-              {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-              {!ollamaModels.includes(modelClassification) && modelClassification && <option value={modelClassification}>{modelClassification} (Current)</option>}
-            </select>
-          </div>
-        </div>
+        </details>
       </section>
 
       {/* Scheduling & Automation */}
@@ -256,9 +235,9 @@ export const SettingsPage = () => {
           <h2 style={{ margin: 0 }}>Automation & Behavior</h2>
         </div>
 
-        <div className="stats-highlight-grid" style={{ marginBottom: '2rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
           <article className="panel highlighted" style={{ margin: 0 }}>
-            <h3>Scheduling Policy</h3>
+            <h3 style={{ marginTop: 0 }}>Scheduling Policy</h3>
             <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
               {schedulePresets.map((preset) => (
                 <button
@@ -278,19 +257,19 @@ export const SettingsPage = () => {
           </article>
 
           <article className="panel highlighted" style={{ margin: 0 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-              <label>
+            <h3 style={{ marginTop: 0 }}>Sync & Thresholds</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1.5rem', marginTop: '1rem' }}>
+              <label style={{ margin: 0 }}>
                 Follow-up Threshold
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <input type="number" value={followupAfterDays} onChange={(e) => setFollowupAfterDays(Number(e.target.value))} disabled={busy} style={{ width: '80px' }} />
-                  <span className="panel-help">days</span>
+                  <span className="panel-help" style={{ margin: 0 }}>days</span>
                 </div>
               </label>
-              <label>
-                Sync Lookback
+              <label style={{ margin: 0 }}>
+                Sync Scan Start Date
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input type="number" value={syncLookbackDays} onChange={(e) => setSyncLookbackDays(Number(e.target.value))} disabled={busy} style={{ width: '80px' }} />
-                  <span className="panel-help">days</span>
+                  <input type="date" value={syncFromDate || ""} onChange={(e) => setSyncFromDate(e.target.value || null)} disabled={busy} style={{ width: '100%', minWidth: '150px' }} />
                 </div>
               </label>
             </div>
@@ -337,10 +316,10 @@ export const SettingsPage = () => {
             {pendingAction === "save" ? "Applying Changes..." : "🚀 Save Global Settings"}
           </button>
         </div>
-      </section>
+      </section >
 
       {/* Maintenance Operations */}
-      <section className="panel" style={{ gridColumn: '1 / -1' }}>
+      < section className="panel" style={{ gridColumn: '1 / -1' }}>
         <h2 style={{ marginBottom: '1.5rem' }}>System Operations</h2>
         <div className="actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
           <article className="panel highlighted" style={{ margin: 0 }}>
@@ -360,7 +339,7 @@ export const SettingsPage = () => {
             </button>
           </article>
         </div>
-      </section>
-    </div>
+      </section >
+    </div >
   );
 };

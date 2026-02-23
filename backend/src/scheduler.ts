@@ -34,14 +34,14 @@ const stopTask = (task: ScheduledTask | null): void => {
 };
 
 export const startSchedulers = async (): Promise<void> => {
-  const settings = await getSettings();
+  const settings = await getSettings("");
   pollTask = createPollTask(settings.pollCron);
   digestTask = createDigestTask(settings.digestCron);
   logger.info("Schedulers started", settings);
 };
 
 export const rescheduleIfNeeded = async (): Promise<void> => {
-  const settings = await getSettings();
+  const settings = await getSettings("");
 
   stopTask(pollTask);
   stopTask(digestTask);

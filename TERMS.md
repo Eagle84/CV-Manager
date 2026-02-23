@@ -26,3 +26,6 @@ We reserve the right to modify these terms or the Service at any time. Continued
 
 ## 7. Governing Law
 These terms are governed by the open-source license (MIT) provided in the repository.
+
+## 8. Contact
+Created by: **Igal Boguslavsky** ([igal.bogu@gmail.com](mailto:igal.bogu@gmail.com))

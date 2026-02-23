@@ -66,7 +66,7 @@ export const JobMatcherPage = () => {
 
     useEffect(() => {
         const timer = setTimeout(() => {
-            loadHistory(1, searchTerm);
+            loadHistory(1, searchTerm.trim());
         }, 400);
         return () => clearTimeout(timer);
     }, [searchTerm]);
@@ -444,8 +444,8 @@ export const JobMatcherPage = () => {
                                     <h2>{result.analysis.matchScore}% Match</h2>
                                     <p>{result.analysis.advice}</p>
                                 </section>
-                                <article className="panel"><h3>💪 Strengths</h3><div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{result.analysis.strengths.map(s => <span key={s} className="chip">{s}</span>)}</div></article>
-                                <article className="panel"><h3>⚠️ Gaps</h3><div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{result.analysis.missingSkills.map(s => <span key={s} className="chip" style={{ color: 'var(--danger)' }}>{s}</span>)}</div></article>
+                                <article className="panel"><h3>💪 Strengths</h3><div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{Array.from(new Set(result.analysis.strengths.map(s => s.trim()))).map(s => <span key={s} className="chip">{s}</span>)}</div></article>
+                                <article className="panel"><h3>⚠️ Gaps</h3><div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>{Array.from(new Set(result.analysis.missingSkills.map(s => s.trim()))).map(s => <span key={s} className="chip" style={{ color: 'var(--danger)' }}>{s}</span>)}</div></article>
                             </>
                         ) : <p style={{ textAlign: 'center', opacity: 0.5 }}>Paste a link above.</p>}
                     </div>

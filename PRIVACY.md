@@ -32,4 +32,6 @@ Since this application runs on your own hardware, data security is primarily man
 You can disconnect your Google account and delete all local data at any time through the application settings.
 
 ## 7. Contact
-For any questions regarding this policy, please contact the repository maintainer through GitHub.
+For any questions regarding this policy, please contact the creator:
+**Igal Boguslavsky**  
+Email: [igal.bogu@gmail.com](mailto:igal.bogu@gmail.com)

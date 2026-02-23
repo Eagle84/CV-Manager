@@ -41,7 +41,8 @@ model GmailAccount {
 
 model EmailMessage {
   id                 String         @id @default(cuid())
-  gmailMessageId     String         @unique
+  userEmail          String         @default("")
+  gmailMessageId     String
   threadId           String
   direction          EmailDirection
   fromEmail          String
@@ -67,6 +68,8 @@ model EmailMessage {
   events             ApplicationEvent[]
   classificationLogs ClassificationRuleLog[]
 
+  @@unique([userEmail, gmailMessageId])
+  @@index([userEmail])
   @@index([parsedCompanyDomain, normalizedRole])
   @@index([groupSenderDomain, groupSubjectKey])
   @@index([applicationId])
@@ -74,6 +77,7 @@ model EmailMessage {
 
 model Application {
   id                  String            @id @default(cuid())
+  userEmail           String            @default("")
   companyName         String            @default("Unknown Company")
   companyDomain       String
   roleTitle           String
@@ -96,7 +100,8 @@ model Application {
   emails              EmailMessage[]
   followups           FollowupTask[]
 
-  @@unique([groupSenderDomain, groupSubjectKey])
+  @@unique([userEmail, groupSenderDomain, groupSubjectKey])
+  @@index([userEmail])
   @@index([companyDomain, normalizedRoleTitle])
   @@index([status, lastActivityAt])
   @@index([cvId])
@@ -104,6 +109,7 @@ model Application {
 
 model CV {
   id              String   @id @default(cuid())
+  userEmail       String   @default("")
   filename        String
   filePath        String
   fileType        String
@@ -117,6 +123,8 @@ model CV {
   updatedAt       DateTime @updatedAt
 
   applications    Application[]
+
+  @@index([userEmail])
 }
 
 model ApplicationEvent {
@@ -163,19 +171,37 @@ model ClassificationRuleLog {
 
 model AppSetting {
   id        String   @id @default(cuid())
-  key       String   @unique
+  userEmail String   @default("")
+  key       String
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([userEmail, key])
+  @@index([userEmail])
 }
 
 model TargetCompany {
   id        String   @id @default(cuid())
+  userEmail String   @default("")
   name      String
-  url       String   @unique
+  url       String
   industry  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([userEmail, url])
+  @@index([userEmail])
   @@index([createdAt(sort: Desc)])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userEmail String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userEmail])
 }

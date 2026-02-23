@@ -18,8 +18,9 @@ export interface CvSummary {
     createdAt: string;
 }
 
-export const listCvs = async (): Promise<CvSummary[]> => {
-    const cvs = await prisma.cV.findMany({
+export const listCvs = async (userEmail: string): Promise<CvSummary[]> => {
+    const cvs = await (prisma as any).cV.findMany({
+        where: { userEmail },
         orderBy: { createdAt: "desc" },
     });
     return cvs.map((cv: any) => ({
@@ -34,8 +35,8 @@ export const listCvs = async (): Promise<CvSummary[]> => {
     }));
 };
 
-export const deleteCv = async (id: string) => {
-    const cv = await prisma.cV.findUnique({ where: { id } });
+export const deleteCv = async (userEmail: string, id: string) => {
+    const cv = await (prisma as any).cV.findFirst({ where: { id, userEmail } });
     if (!cv) return;
 
     try {
@@ -44,17 +45,17 @@ export const deleteCv = async (id: string) => {
         console.error("Failed to delete CV file:", err);
     }
 
-    await prisma.cV.delete({ where: { id } });
+    await (prisma as any).cV.delete({ where: { id } });
 };
 
-export const setDefaultCv = async (id: string) => {
-    await prisma.$transaction([
-        prisma.cV.updateMany({ data: { isDefault: false } }),
-        prisma.cV.update({ where: { id }, data: { isDefault: true } }),
+export const setDefaultCv = async (userEmail: string, id: string) => {
+    await (prisma as any).$transaction([
+        (prisma as any).cV.updateMany({ where: { userEmail }, data: { isDefault: false } }),
+        (prisma as any).cV.updateMany({ where: { id, userEmail }, data: { isDefault: true } }),
     ]);
 };
 
-export const processCvUpload = async (filePath: string, filename: string, fileType: string) => {
+export const processCvUpload = async (userEmail: string, filePath: string, filename: string, fileType: string) => {
     let text = "";
     try {
         if (fileType === "application/pdf") {
@@ -76,13 +77,14 @@ export const processCvUpload = async (filePath: string, filename: string, fileTy
         text = "Error extracting text";
     }
 
-    const settings = await getSettings();
+    const settings = await getSettings(userEmail);
     const analysis = await extractCvWithOllama(text, { model: settings.modelCv });
 
-    const existingCount = await prisma.cV.count();
+    const existingCount = await (prisma as any).cV.count({ where: { userEmail } });
 
-    return prisma.cV.create({
+    return (prisma as any).cV.create({
         data: {
+            userEmail,
             filename,
             filePath,
             fileType,
@@ -96,8 +98,8 @@ export const processCvUpload = async (filePath: string, filename: string, fileTy
     });
 };
 
-export const getDefaultCv = async () => {
-    return prisma.cV.findFirst({
-        where: { isDefault: true },
+export const getDefaultCv = async (userEmail: string) => {
+    return (prisma as any).cV.findFirst({
+        where: { userEmail, isDefault: true },
     });
 };

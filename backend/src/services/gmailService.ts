@@ -27,7 +27,7 @@ export const getGoogleAuthUrl = (state?: string): string => {
   const oauth2Client = createOAuth2Client();
   return oauth2Client.generateAuthUrl({
     access_type: "offline",
-    prompt: "consent",
+    prompt: "consent select_account",
     scope: SCOPES,
     state,
   });
@@ -60,10 +60,6 @@ export const handleGoogleOAuthCallback = async (code: string): Promise<GmailAcco
     throw new Error("Unable to resolve connected Gmail account");
   }
 
-  if (config.ALLOWED_GMAIL && email !== config.ALLOWED_GMAIL.toLowerCase()) {
-    throw new Error(`Only ${config.ALLOWED_GMAIL} can be connected.`);
-  }
-
   if (!tokenResponse.tokens.refresh_token) {
     const existing = await prisma.gmailAccount.findUnique({ where: { email } });
     if (!existing?.refreshToken) {
@@ -94,13 +90,27 @@ export const handleGoogleOAuthCallback = async (code: string): Promise<GmailAcco
   return account;
 };
 
-export const getConnectedAccount = async (): Promise<GmailAccount | null> => {
+
+export const getConnectedAccount = async (email: string): Promise<GmailAccount | null> => {
+  return prisma.gmailAccount.findUnique({ where: { email } });
+};
+
+export const listConnectedAccounts = async (): Promise<GmailAccount[]> => {
+  return prisma.gmailAccount.findMany({ orderBy: { createdAt: "asc" } });
+};
+
+export const getActiveAccount = async (activeEmail: string | null): Promise<GmailAccount | null> => {
+  if (activeEmail) {
+    return prisma.gmailAccount.findUnique({ where: { email: activeEmail } });
+  }
+  // Fallback: return first known account
   return prisma.gmailAccount.findFirst({ orderBy: { createdAt: "asc" } });
 };
 
-export const disconnectGoogleAccount = async (): Promise<void> => {
-  await prisma.gmailAccount.deleteMany();
+export const disconnectGoogleAccount = async (email: string): Promise<void> => {
+  await prisma.gmailAccount.deleteMany({ where: { email } });
 };
+
 
 export const getGmailClientForAccount = (account: GmailAccount): gmail_v1.Gmail => {
   const oauth2Client = createOAuth2Client();

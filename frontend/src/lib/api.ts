@@ -1,10 +1,62 @@
 import axios from "axios";
 import type { ApplicationDetail, ApplicationSummary, DashboardSummary, DuplicateCheckResponse } from "shared";
 
+const SESSION_TOKEN_KEY = "cv_manager_session_token";
+const ACTIVE_USER_EMAIL_KEY = "cv_manager_active_email";
+
+export const setSessionToken = (token: string | null) => {
+  if (token) {
+    localStorage.setItem(SESSION_TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(SESSION_TOKEN_KEY);
+  }
+};
+
+export const getSessionToken = (): string | null => {
+  return localStorage.getItem(SESSION_TOKEN_KEY);
+};
+
+export const setActiveUserEmail = (email: string | null) => {
+  if (email) {
+    localStorage.setItem(ACTIVE_USER_EMAIL_KEY, email);
+  } else {
+    localStorage.removeItem(ACTIVE_USER_EMAIL_KEY);
+  }
+};
+
+export const getActiveUserEmail = (): string | null => {
+  return localStorage.getItem(ACTIVE_USER_EMAIL_KEY);
+};
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8787",
   timeout: 60000,
 });
+
+// Attach the active user email to every request
+// Attach the session token to every request
+api.interceptors.request.use((config) => {
+  const token = getSessionToken();
+  if (token) {
+    config.headers["Authorization"] = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Handle unauthorized responses
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      setSessionToken(null);
+      setActiveUserEmail(null);
+      if (window.location.pathname !== "/login") {
+        window.location.href = "/login";
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export interface FollowupItem {
   id: string;
@@ -77,8 +129,9 @@ export interface SettingsDto {
   pollCron: string;
   digestCron: string;
   followupAfterDays: number;
-  syncLookbackDays: number;
+  syncFromDate: string | null;
   connectedEmail: string | null;
+  connectedEmails: string[];
   modelEmail: string;
   modelCv: string;
   modelMatcher: string;
@@ -214,7 +267,7 @@ export const apiClient = {
     pollCron?: string;
     digestCron?: string;
     followupAfterDays?: number;
-    syncLookbackDays?: number;
+    syncFromDate?: string | null;
     modelEmail?: string;
     modelCv?: string;
     modelMatcher?: string;
@@ -228,16 +281,26 @@ export const apiClient = {
     const response = await api.get<string[]>("/api/ollama/models");
     return response.data;
   },
-  getAuthStatus: async (): Promise<{ connected: boolean; email: string | null }> => {
-    const response = await api.get<{ connected: boolean; email: string | null }>("/api/auth/google/status");
-    return response.data;
+  getAuthStatus: async (): Promise<{ connected: boolean; email: string | null; connectedEmails: string[] }> => {
+    try {
+      const response = await api.get<{ connected: boolean; email: string | null; connectedEmails: string[] }>("/api/auth/google/status");
+      return response.data;
+    } catch (err) {
+      return { connected: false, email: null, connectedEmails: [] };
+    }
   },
-  getGoogleAuthUrl: async (): Promise<string> => {
-    const response = await api.get<{ url: string }>("/api/auth/google/start");
+  getGoogleAuthUrl: async (mode: "login" | "connect" = "login"): Promise<string> => {
+    const response = await api.get<{ url: string }>("/api/auth/google/start", { params: { mode } });
     return response.data.url;
   },
-  disconnectGoogle: async (): Promise<void> => {
-    await api.post("/api/auth/google/disconnect");
+  logout: async (): Promise<void> => {
+    await api.post("/api/auth/logout").catch(() => { });
+    setSessionToken(null);
+    setActiveUserEmail(null);
+    window.location.href = "/login";
+  },
+  disconnectGoogle: async (email: string): Promise<void> => {
+    await api.post("/api/auth/google/disconnect", { email });
   },
   runSync: async (): Promise<SyncResponse> => {
     const response = await api.post<SyncResponse>("/api/sync/run", undefined, { timeout: 600000 });

@@ -6,11 +6,12 @@ export interface ResetTrackingStats {
   checkpointsReset: number;
 }
 
-export const resetTrackingData = async (): Promise<ResetTrackingStats> => {
+export const resetTrackingData = async (userEmail: string): Promise<ResetTrackingStats> => {
   const [emailsResult, applicationsResult, checkpointsResult] = await prisma.$transaction([
-    prisma.emailMessage.deleteMany(),
-    prisma.application.deleteMany(),
-    prisma.gmailAccount.updateMany({
+    (prisma as any).emailMessage.deleteMany({ where: { userEmail } }),
+    (prisma as any).application.deleteMany({ where: { userEmail } }),
+    (prisma as any).gmailAccount.updateMany({
+      where: { email: userEmail },
       data: {
         lastHistoryId: null,
       },

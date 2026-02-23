@@ -1,13 +1,13 @@
 import type { Application } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 
-const TERMINAL_STATUSES = new Set<Application["status"]>(["rejected", "offer", "withdrawn"]);
+const TERMINAL_STATUSES = new Set<string>(["rejected", "offer", "withdrawn"]);
 
 export const refreshFollowupForApplication = async (
   application: Application,
   followupAfterDays: number,
 ): Promise<void> => {
-  const openTask = await prisma.followupTask.findFirst({
+  const openTask = await (prisma as any).followupTask.findFirst({
     where: {
       applicationId: application.id,
       state: "open",
@@ -17,7 +17,7 @@ export const refreshFollowupForApplication = async (
 
   if (TERMINAL_STATUSES.has(application.status)) {
     if (openTask) {
-      await prisma.followupTask.update({
+      await (prisma as any).followupTask.update({
         where: { id: openTask.id },
         data: { state: "done" },
       });
@@ -29,7 +29,7 @@ export const refreshFollowupForApplication = async (
   dueAt.setDate(dueAt.getDate() + followupAfterDays);
 
   if (!openTask) {
-    await prisma.followupTask.create({
+    await (prisma as any).followupTask.create({
       data: {
         applicationId: application.id,
         dueAt,
@@ -41,7 +41,7 @@ export const refreshFollowupForApplication = async (
   }
 
   if (Math.abs(openTask.dueAt.getTime() - dueAt.getTime()) > 1000) {
-    await prisma.followupTask.update({
+    await (prisma as any).followupTask.update({
       where: { id: openTask.id },
       data: {
         dueAt,
@@ -51,9 +51,12 @@ export const refreshFollowupForApplication = async (
   }
 };
 
-export const listFollowups = async (state?: "open" | "done" | "snoozed") => {
-  return prisma.followupTask.findMany({
-    where: state ? { state } : undefined,
+export const listFollowups = async (userEmail: string, state?: "open" | "done" | "snoozed") => {
+  return (prisma as any).followupTask.findMany({
+    where: {
+      state: state || undefined,
+      application: { userEmail },
+    },
     include: {
       application: true,
     },
@@ -61,9 +64,12 @@ export const listFollowups = async (state?: "open" | "done" | "snoozed") => {
   });
 };
 
-export const completeFollowup = async (id: string) => {
-  return prisma.followupTask.update({
-    where: { id },
+export const completeFollowup = async (userEmail: string, id: string) => {
+  return (prisma as any).followupTask.updateMany({
+    where: {
+      id,
+      application: { userEmail }
+    },
     data: { state: "done" },
   });
 };

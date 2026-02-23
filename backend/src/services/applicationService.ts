@@ -402,8 +402,8 @@ export interface ListApplicationsFilters {
   manualOnly?: boolean;
 }
 
-export const listApplications = async (filters: ListApplicationsFilters): Promise<ApplicationSummary[]> => {
-  const where: Prisma.ApplicationWhereInput = {};
+export const listApplications = async (userEmail: string, filters: ListApplicationsFilters): Promise<ApplicationSummary[]> => {
+  const where: any = { userEmail };
 
   if (filters.status) {
     where.status = filters.status as Application["status"];
@@ -476,17 +476,17 @@ export const listApplications = async (filters: ListApplicationsFilters): Promis
     where.manualStatusLocked = true;
   }
 
-  const applications = await prisma.application.findMany({
+  const applications = await (prisma as any).application.findMany({
     where,
     orderBy: { lastActivityAt: "desc" },
-  });
+  }) as Application[];
 
   return applications.map(mapSummary);
 };
 
-export const getApplicationDetail = async (id: string): Promise<ApplicationDetail | null> => {
-  const application = await prisma.application.findUnique({
-    where: { id },
+export const getApplicationDetail = async (userEmail: string, id: string): Promise<ApplicationDetail | null> => {
+  const application = await (prisma as any).application.findFirst({
+    where: { id, userEmail },
     include: {
       events: {
         orderBy: { eventAt: "desc" },
@@ -498,7 +498,7 @@ export const getApplicationDetail = async (id: string): Promise<ApplicationDetai
         orderBy: { dueAt: "asc" },
       },
     },
-  });
+  }) as any;
 
   if (!application) {
     return null;
@@ -506,7 +506,7 @@ export const getApplicationDetail = async (id: string): Promise<ApplicationDetai
 
   return {
     ...mapSummary(application),
-    events: application.events.map((event) => ({
+    events: application.events.map((event: any) => ({
       id: event.id,
       applicationId: event.applicationId,
       eventType: event.eventType,
@@ -514,7 +514,7 @@ export const getApplicationDetail = async (id: string): Promise<ApplicationDetai
       emailMessageId: event.emailMessageId,
       detailsJson: event.detailsJson,
     })),
-    emails: application.emails.map((email) => ({
+    emails: application.emails.map((email: any) => ({
       id: email.id,
       gmailMessageId: email.gmailMessageId,
       threadId: email.threadId,
@@ -533,7 +533,7 @@ export const getApplicationDetail = async (id: string): Promise<ApplicationDetai
       groupSubjectKey: email.groupSubjectKey,
       aiConfidence: email.aiConfidence,
     })),
-    followups: application.followups.map((task) => ({
+    followups: application.followups.map((task: any) => ({
       id: task.id,
       applicationId: task.applicationId,
       dueAt: task.dueAt.toISOString(),
@@ -553,10 +553,11 @@ export interface PatchApplicationInput {
 }
 
 export const patchApplication = async (
+  userEmail: string,
   id: string,
   payload: PatchApplicationInput,
 ): Promise<ApplicationSummary | null> => {
-  const current = await prisma.application.findUnique({ where: { id } });
+  const current = await (prisma as any).application.findFirst({ where: { id, userEmail } });
   if (!current) {
     return null;
   }
@@ -589,24 +590,27 @@ export const patchApplication = async (
   return mapSummary(updated);
 };
 
-export const getDashboardSummary = async (): Promise<DashboardSummary> => {
+export const getDashboardSummary = async (userEmail: string): Promise<DashboardSummary> => {
   const [totalApplications, grouped, followupsDue, recent] = await Promise.all([
-    prisma.application.count(),
-    prisma.application.groupBy({
+    (prisma as any).application.count({ where: { userEmail } }),
+    (prisma as any).application.groupBy({
       by: ["status"],
+      where: { userEmail },
       _count: {
         status: true,
       },
     }),
-    prisma.followupTask.count({
+    (prisma as any).followupTask.count({
       where: {
         state: "open",
         dueAt: {
           lte: new Date(),
         },
+        application: { userEmail },
       },
     }),
-    prisma.application.findMany({
+    (prisma as any).application.findMany({
+      where: { userEmail },
       orderBy: { lastActivityAt: "desc" },
       take: 8,
     }),
@@ -622,8 +626,8 @@ export const getDashboardSummary = async (): Promise<DashboardSummary> => {
     withdrawn: 0,
   };
 
-  for (const row of grouped) {
-    base[row.status] = row._count.status;
+  for (const row of grouped as any[]) {
+    base[row.status as Application["status"]] = row._count?.status ?? 0;
   }
 
   return {
@@ -635,6 +639,7 @@ export const getDashboardSummary = async (): Promise<DashboardSummary> => {
 };
 
 export const checkDuplicate = async (
+  userEmail: string,
   companyDomain: string,
   roleTitle: string,
 ): Promise<DuplicateCheckResponse> => {
@@ -642,8 +647,9 @@ export const checkDuplicate = async (
   const normalizedRole = normalizeRole(roleTitle);
   const key = buildDuplicateKey(normalizedDomain, normalizedRole);
 
-  const matched = await prisma.application.findFirst({
+  const matched = await (prisma as any).application.findFirst({
     where: {
+      userEmail,
       companyDomain: normalizedDomain,
       normalizedRoleTitle: normalizedRole,
     },
@@ -656,14 +662,15 @@ export const checkDuplicate = async (
   };
 };
 
-export const getCompanyOverview = async (companyDomain: string): Promise<CompanyOverview | null> => {
+export const getCompanyOverview = async (userEmail: string, companyDomain: string): Promise<CompanyOverview | null> => {
   const normalizedDomain = companyDomain.trim().toLowerCase();
   if (!normalizedDomain) {
     return null;
   }
 
-  const applications = await prisma.application.findMany({
+  const applications = await (prisma as any).application.findMany({
     where: {
+      userEmail,
       companyDomain: normalizedDomain,
     },
     orderBy: [{ lastActivityAt: "desc" }, { firstSeenAt: "asc" }],
@@ -730,7 +737,7 @@ export const getCompanyOverview = async (companyDomain: string): Promise<Company
   };
 
   for (const application of applications) {
-    statusCounts[application.status] += 1;
+    (statusCounts as any)[application.status] += 1;
   }
 
   const activeApplications =
@@ -738,8 +745,8 @@ export const getCompanyOverview = async (companyDomain: string): Promise<Company
   const closedApplications = statusCounts.offer + statusCounts.rejected + statusCounts.withdrawn;
   const uniqueRoles = new Set(
     applications
-      .map((application) => application.normalizedRoleTitle)
-      .filter((normalizedRoleTitle) => normalizedRoleTitle !== "unknown-role"),
+      .map((application: any) => application.normalizedRoleTitle)
+      .filter((normalizedRoleTitle: any) => normalizedRoleTitle !== "unknown-role"),
   ).size;
   const responseRate =
     applications.length === 0 ? 0 : roundPct((activeApplications + closedApplications) / applications.length * 100);
@@ -772,11 +779,11 @@ export const getCompanyOverview = async (companyDomain: string): Promise<Company
 
   const companyName = applications[0].companyName;
   const firstSeenAt = applications.reduce(
-    (earliest, current) => (current.firstSeenAt < earliest ? current.firstSeenAt : earliest),
+    (earliest: any, current: any) => (current.firstSeenAt < earliest ? current.firstSeenAt : earliest),
     applications[0].firstSeenAt,
   );
   const lastActivityAt = applications.reduce(
-    (latest, current) => (current.lastActivityAt > latest ? current.lastActivityAt : latest),
+    (latest: any, current: any) => (current.lastActivityAt > latest ? current.lastActivityAt : latest),
     applications[0].lastActivityAt,
   );
 
@@ -800,7 +807,7 @@ export const getCompanyOverview = async (companyDomain: string): Promise<Company
       topSenderDomains,
       lastIncomingEmailAt: lastIncomingEmailAt?.toISOString() ?? null,
     },
-    positions: applications.map((application) => ({
+    positions: applications.map((application: any) => ({
       id: application.id,
       roleTitle: application.roleTitle,
       normalizedRoleTitle: application.normalizedRoleTitle,
@@ -813,23 +820,24 @@ export const getCompanyOverview = async (companyDomain: string): Promise<Company
       manualStatusLocked: application.manualStatusLocked,
       latestEvent: application.events[0]
         ? {
-            eventType: application.events[0].eventType,
-            eventAt: application.events[0].eventAt.toISOString(),
-          }
+          eventType: application.events[0].eventType,
+          eventAt: application.events[0].eventAt.toISOString(),
+        }
         : null,
       nextFollowupAt: application.followups[0]?.dueAt.toISOString() ?? null,
       latestEmail: application.emails[0]
         ? {
-            subject: application.emails[0].subject,
-            receivedAt: application.emails[0].receivedAt?.toISOString() ?? null,
-            classification: application.emails[0].classification,
-          }
+          subject: application.emails[0].subject,
+          receivedAt: application.emails[0].receivedAt?.toISOString() ?? null,
+          classification: application.emails[0].classification,
+        }
         : null,
     })),
   };
 };
 
 export const createOrUpdateApplicationFromEmail = async (payload: {
+  userEmail: string;
   companyDomain: string;
   roleTitle: string;
   groupSenderDomain: string;
@@ -845,10 +853,12 @@ export const createOrUpdateApplicationFromEmail = async (payload: {
   const companyDomain = payload.companyDomain.toLowerCase();
   const groupSenderDomain = payload.groupSenderDomain.toLowerCase();
   const groupSubjectKey = payload.groupSubjectKey.toLowerCase();
+  const userEmail = payload.userEmail;
 
-  const existing = await prisma.application.findUnique({
+  const existing = await (prisma as any).application.findUnique({
     where: {
-      groupSenderDomain_groupSubjectKey: {
+      userEmail_groupSenderDomain_groupSubjectKey: {
+        userEmail,
         groupSenderDomain,
         groupSubjectKey,
       },
@@ -856,37 +866,38 @@ export const createOrUpdateApplicationFromEmail = async (payload: {
   });
 
   const next = existing
-    ? await prisma.application.update({
-        where: { id: existing.id },
-        data: {
-          roleTitle:
-            payload.roleTitle !== "unknown-role" ? payload.roleTitle : existing.roleTitle,
-          companyName:
-            payload.companyName !== "Unknown Company" ? payload.companyName : existing.companyName,
-          companyDomain: companyDomain || existing.companyDomain,
-          normalizedRoleTitle:
-            payload.roleTitle !== "unknown-role"
-              ? normalizedRoleTitle
-              : existing.normalizedRoleTitle,
-          status: existing.manualStatusLocked ? existing.status : payload.status,
-          sourceEmailMessageId: existing.sourceEmailMessageId ?? payload.sourceEmailMessageId,
-          lastActivityAt: payload.eventAt,
-        },
-      })
-    : await prisma.application.create({
-        data: {
-          companyName: payload.companyName,
-          companyDomain,
-          roleTitle: payload.roleTitle,
-          normalizedRoleTitle,
-          groupSenderDomain,
-          groupSubjectKey,
-          status: payload.status,
-          sourceEmailMessageId: payload.sourceEmailMessageId,
-          firstSeenAt: payload.eventAt,
-          lastActivityAt: payload.eventAt,
-        },
-      });
+    ? await (prisma as any).application.update({
+      where: { id: existing.id },
+      data: {
+        roleTitle:
+          payload.roleTitle !== "unknown-role" ? payload.roleTitle : existing.roleTitle,
+        companyName:
+          payload.companyName !== "Unknown Company" ? payload.companyName : existing.companyName,
+        companyDomain: companyDomain || existing.companyDomain,
+        normalizedRoleTitle:
+          payload.roleTitle !== "unknown-role"
+            ? normalizedRoleTitle
+            : existing.normalizedRoleTitle,
+        status: existing.manualStatusLocked ? existing.status : payload.status,
+        sourceEmailMessageId: existing.sourceEmailMessageId ?? payload.sourceEmailMessageId,
+        lastActivityAt: payload.eventAt,
+      },
+    })
+    : await (prisma as any).application.create({
+      data: {
+        userEmail,
+        companyName: payload.companyName,
+        companyDomain,
+        roleTitle: payload.roleTitle,
+        normalizedRoleTitle,
+        groupSenderDomain,
+        groupSubjectKey,
+        status: payload.status,
+        sourceEmailMessageId: payload.sourceEmailMessageId,
+        firstSeenAt: payload.eventAt,
+        lastActivityAt: payload.eventAt,
+      },
+    });
 
   await prisma.applicationEvent.create({
     data: {

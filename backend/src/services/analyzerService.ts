@@ -38,15 +38,15 @@ export const scrapeJobDescription = async (url: string): Promise<string> => {
     }
 };
 
-export const analyzeJobUrl = async (url: string) => {
+export const analyzeJobUrl = async (userEmail: string, url: string) => {
     const jdText = await scrapeJobDescription(url);
-    const cv = await getDefaultCv();
+    const cv = await getDefaultCv(userEmail);
 
     if (!cv || !cv.extractedText) {
         throw new Error("No primary CV found. Please upload a CV first in the My CVs page.");
     }
 
-    const settings = await getSettings();
+    const settings = await getSettings(userEmail);
     const analysis = await matchJobWithCv(jdText, cv.extractedText, { model: settings.modelMatcher });
 
     if (!analysis) {
@@ -79,8 +79,8 @@ export const findCareersPage = async (companyName: string, companyUrl?: string) 
     return null;
 };
 
-export const findMatchingJobsOnPage = async (pageUrl: string) => {
-    const cv = await getDefaultCv();
+export const findMatchingJobsOnPage = async (userEmail: string, pageUrl: string) => {
+    const cv = await getDefaultCv(userEmail);
     if (!cv || !cv.extractedText) throw new Error("No CV found.");
 
     const response = await fetch(pageUrl);
@@ -112,7 +112,7 @@ export const findMatchingJobsOnPage = async (pageUrl: string) => {
     // Use LLM to pick the top 3 matches
     const prompt = `Based on my CV summary: ${cv.summary}\n\nPick the top 3 most relevant job links from this list for someone with these skills: ${cv.skills}.\n\nLinks:\n${links.slice(0, 30).map(l => `- ${l.title}: ${l.url}`).join("\n")}\n\nReturn ONLY JSON as an array of {title, url, reasoning}.`;
 
-    const settings = await getSettings();
+    const settings = await getSettings(userEmail);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.OLLAMA_TIMEOUT_MS);
 
@@ -154,9 +154,9 @@ export const findMatchingJobsOnPage = async (pageUrl: string) => {
     }
 };
 
-export const classifyCompany = async (companyName: string, url: string): Promise<string> => {
+export const classifyCompany = async (userEmail: string, companyName: string, url: string): Promise<string> => {
     try {
-        const settings = await getSettings(); //
+        const settings = await getSettings(userEmail); //
         const prompt = `Classify the industry of this company based on its name and URL. 
 Return ONLY a short category (e.g., "Cyber", "Fintech", "Healthcare", "E-commerce", "SaaS", "Automotive", "Retail", "Aviation").
 Company Name: ${companyName}
@@ -175,21 +175,20 @@ Category:`; //
         });
 
         if (!response.ok) return "Unknown"; //
-        
+
         const body = await response.json() as any; //
         return (body.response ?? "Unknown").trim().replace(/[^a-zA-Z-\s]/g, ""); //
     } catch (err: any) {
-        // Detailed logging for the ECONNREFUSED error you encountered
         if (err.code === 'ECONNREFUSED') {
-            console.error(`[Ollama] Connection refused at ${config.OLLAMA_BASE_URL}. Is the service running?`); //
+            console.warn(`[Ollama] Connection refused at ${config.OLLAMA_BASE_URL}. Industry classification skipped.`);
         } else {
-            console.error("Classification error:", err); //
+            console.error(`[Analyzer] Classification error:`, err.message || err);
         }
-        return "Unknown"; //
+        return "Unknown";
     }
 };
 
-export const saveTargetCompanies = async (items: { name: string; url: string }[]) => {
+export const saveTargetCompanies = async (userEmail: string, items: { name: string; url: string }[]) => {
     const CHUNK_SIZE = 100;
     const results: any[] = [];
 
@@ -200,50 +199,48 @@ export const saveTargetCompanies = async (items: { name: string; url: string }[]
                 if (!item.url) continue;
                 try {
                     const saved = await tx.targetCompany.upsert({
-                        where: { url: item.url },
+                        where: { userEmail_url: { userEmail, url: item.url } },
                         update: { name: item.name || "Unknown Company" },
-                        create: { name: item.name || "Unknown Company", url: item.url },
+                        create: { userEmail, name: item.name || "Unknown Company", url: item.url },
                     });
                     results.push(saved);
 
-                    // Trigger classification in background if industry is missing
+                    // Trigger classification in background 
                     if (!saved.industry) {
-                        // Use a slight delay to avoid SQLite locking during the active transaction
                         setTimeout(async () => {
                             try {
-                                const industry = await classifyCompany(saved.name, saved.url);
+                                const industry = await classifyCompany(userEmail, saved.name, saved.url);
                                 if (industry && industry !== "Unknown") {
-                                    await prisma.targetCompany.update({
+                                    await (prisma as any).targetCompany.update({
                                         where: { id: saved.id },
                                         data: { industry },
                                     });
                                 }
-                            } catch (err) {
-                                console.error(`[Background] Failed to classify ${saved.name}:`, err);
+                            } catch (backgroundErr: any) {
+                                // Silent for background tasks to avoid console clutter
                             }
-                        }, 500 + i);
+                        }, 500);
                     }
                 } catch (err) {
-                    console.error(`Failed to save company ${item.name}:`, err);
+                    console.error(`[Analyzer] Error saving company ${item.name}:`, err);
                 }
             }
-        }, {
-            maxWait: 20000, // 20s
-            timeout: 60000,  // 60s
         });
     }
     return results;
 };
 
-export const listTargetCompanies = async (page: number = 1, limit: number = 10, search?: string) => {
+export const listTargetCompanies = async (userEmail: string, page: number = 1, limit: number = 10, search?: string) => {
     const skip = (page - 1) * limit;
+    const baseWhere = { userEmail };
     const where = search ? {
+        ...baseWhere,
         OR: [
             { name: { contains: search } },
             { url: { contains: search } },
             { industry: { contains: search } },
         ]
-    } : {};
+    } : baseWhere;
 
     const [total, items] = await Promise.all([
         (prisma as any).targetCompany.count({ where }),

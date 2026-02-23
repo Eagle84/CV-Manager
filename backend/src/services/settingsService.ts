@@ -5,7 +5,7 @@ export const SETTINGS_KEYS = {
   pollCron: "poll_cron",
   digestCron: "digest_cron",
   followupAfterDays: "followup_after_days",
-  syncLookbackDays: "sync_lookback_days",
+  syncFromDate: "sync_from_date",
   modelEmail: "model_email",
   modelCv: "model_cv",
   modelMatcher: "model_matcher",
@@ -17,7 +17,7 @@ export interface AppSettings {
   pollCron: string;
   digestCron: string;
   followupAfterDays: number;
-  syncLookbackDays: number;
+  syncFromDate: string | null;
   modelEmail: string;
   modelCv: string;
   modelMatcher: string;
@@ -29,7 +29,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pollCron: config.POLL_CRON,
   digestCron: config.DIGEST_CRON,
   followupAfterDays: config.FOLLOWUP_AFTER_DAYS,
-  syncLookbackDays: config.SYNC_LOOKBACK_DAYS,
+  syncFromDate: null,
   modelEmail: config.OLLAMA_MODEL,
   modelCv: config.OLLAMA_MODEL,
   modelMatcher: config.OLLAMA_MODEL,
@@ -42,7 +42,7 @@ export const ensureDefaultSettings = async (): Promise<void> => {
     [SETTINGS_KEYS.pollCron, DEFAULT_SETTINGS.pollCron],
     [SETTINGS_KEYS.digestCron, DEFAULT_SETTINGS.digestCron],
     [SETTINGS_KEYS.followupAfterDays, String(DEFAULT_SETTINGS.followupAfterDays)],
-    [SETTINGS_KEYS.syncLookbackDays, String(DEFAULT_SETTINGS.syncLookbackDays)],
+    [SETTINGS_KEYS.syncFromDate, DEFAULT_SETTINGS.syncFromDate ?? ""],
     [SETTINGS_KEYS.modelEmail, DEFAULT_SETTINGS.modelEmail],
     [SETTINGS_KEYS.modelCv, DEFAULT_SETTINGS.modelCv],
     [SETTINGS_KEYS.modelMatcher, DEFAULT_SETTINGS.modelMatcher],
@@ -51,134 +51,73 @@ export const ensureDefaultSettings = async (): Promise<void> => {
   ];
 
   for (const [key, value] of defaults) {
-    await prisma.appSetting.upsert({
-      where: { key },
+    await (prisma as any).appSetting.upsert({
+      where: { userEmail_key: { userEmail: "", key } },
       update: {},
-      create: { key, value },
+      create: { userEmail: "", key, value },
     });
   }
 };
 
-export const getSettings = async (): Promise<AppSettings> => {
-  const rows = await prisma.appSetting.findMany({
+export const getSettings = async (userEmail: string | null): Promise<AppSettings> => {
+  if (userEmail === null) return DEFAULT_SETTINGS;
+
+  const rows = await (prisma as any).appSetting.findMany({
     where: {
+      userEmail,
       key: {
-        in: [
-          SETTINGS_KEYS.pollCron,
-          SETTINGS_KEYS.digestCron,
-          SETTINGS_KEYS.followupAfterDays,
-          SETTINGS_KEYS.syncLookbackDays,
-          SETTINGS_KEYS.modelEmail,
-          SETTINGS_KEYS.modelCv,
-          SETTINGS_KEYS.modelMatcher,
-          SETTINGS_KEYS.modelExplorer,
-          SETTINGS_KEYS.modelClassification,
-        ],
+        in: Object.values(SETTINGS_KEYS),
       },
     },
   });
 
-  const map = new Map(rows.map((row) => [row.key, row.value]));
+  const map = new Map<string, string>(rows.map((row: any) => [row.key, row.value]));
 
   return {
-    pollCron: map.get(SETTINGS_KEYS.pollCron) ?? DEFAULT_SETTINGS.pollCron,
-    digestCron: map.get(SETTINGS_KEYS.digestCron) ?? DEFAULT_SETTINGS.digestCron,
+    pollCron: String(map.get(SETTINGS_KEYS.pollCron) ?? DEFAULT_SETTINGS.pollCron),
+    digestCron: String(map.get(SETTINGS_KEYS.digestCron) ?? DEFAULT_SETTINGS.digestCron),
     followupAfterDays: Number(map.get(SETTINGS_KEYS.followupAfterDays) ?? DEFAULT_SETTINGS.followupAfterDays),
-    syncLookbackDays: Number(map.get(SETTINGS_KEYS.syncLookbackDays) ?? DEFAULT_SETTINGS.syncLookbackDays),
-    modelEmail: map.get(SETTINGS_KEYS.modelEmail) ?? DEFAULT_SETTINGS.modelEmail,
-    modelCv: map.get(SETTINGS_KEYS.modelCv) ?? DEFAULT_SETTINGS.modelCv,
-    modelMatcher: map.get(SETTINGS_KEYS.modelMatcher) ?? DEFAULT_SETTINGS.modelMatcher,
-    modelExplorer: map.get(SETTINGS_KEYS.modelExplorer) ?? DEFAULT_SETTINGS.modelExplorer,
-    modelClassification: map.get(SETTINGS_KEYS.modelClassification) ?? DEFAULT_SETTINGS.modelClassification,
+    syncFromDate: map.get(SETTINGS_KEYS.syncFromDate) ? String(map.get(SETTINGS_KEYS.syncFromDate)) : null,
+    modelEmail: String(map.get(SETTINGS_KEYS.modelEmail) ?? DEFAULT_SETTINGS.modelEmail),
+    modelCv: String(map.get(SETTINGS_KEYS.modelCv) ?? DEFAULT_SETTINGS.modelCv),
+    modelMatcher: String(map.get(SETTINGS_KEYS.modelMatcher) ?? DEFAULT_SETTINGS.modelMatcher),
+    modelExplorer: String(map.get(SETTINGS_KEYS.modelExplorer) ?? DEFAULT_SETTINGS.modelExplorer),
+    modelClassification: String(map.get(SETTINGS_KEYS.modelClassification) ?? DEFAULT_SETTINGS.modelClassification),
   };
 };
 
-export const updateSettings = async (payload: Partial<AppSettings>): Promise<AppSettings> => {
+export const updateSettings = async (userEmail: string, payload: Partial<AppSettings>): Promise<AppSettings> => {
   const writes: Promise<unknown>[] = [];
 
-  if (payload.pollCron) {
+  const updateOrStore = (key: string, value: string) => {
     writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.pollCron },
-        update: { value: payload.pollCron },
-        create: { key: SETTINGS_KEYS.pollCron, value: payload.pollCron },
+      (prisma as any).appSetting.upsert({
+        where: { userEmail_key: { userEmail, key } },
+        update: { value },
+        create: { userEmail, key, value },
       }),
     );
-  }
+  };
 
-  if (payload.digestCron) {
-    writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.digestCron },
-        update: { value: payload.digestCron },
-        create: { key: SETTINGS_KEYS.digestCron, value: payload.digestCron },
-      }),
-    );
-  }
-
-  if (typeof payload.followupAfterDays === "number") {
-    writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.followupAfterDays },
-        update: { value: String(payload.followupAfterDays) },
-        create: { key: SETTINGS_KEYS.followupAfterDays, value: String(payload.followupAfterDays) },
-      }),
-    );
-  }
-
-  if (typeof payload.syncLookbackDays === "number") {
-    writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.syncLookbackDays },
-        update: { value: String(payload.syncLookbackDays) },
-        create: { key: SETTINGS_KEYS.syncLookbackDays, value: String(payload.syncLookbackDays) },
-      }),
-    );
-  }
-
-  if (payload.modelEmail) {
-    writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.modelEmail },
-        update: { value: payload.modelEmail },
-        create: { key: SETTINGS_KEYS.modelEmail, value: payload.modelEmail },
-      }),
-    );
-  }
-
-  if (payload.modelCv) {
-    writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.modelCv },
-        update: { value: payload.modelCv },
-        create: { key: SETTINGS_KEYS.modelCv, value: payload.modelCv },
-      }),
-    );
-  }
-
-  if (payload.modelMatcher) {
-    writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.modelMatcher },
-        update: { value: payload.modelMatcher },
-        create: { key: SETTINGS_KEYS.modelMatcher, value: payload.modelMatcher },
-      }),
-    );
-  }
-
-  if (payload.modelClassification) {
-    writes.push(
-      prisma.appSetting.upsert({
-        where: { key: SETTINGS_KEYS.modelClassification },
-        update: { value: payload.modelClassification },
-        create: { key: SETTINGS_KEYS.modelClassification, value: payload.modelClassification },
-      }),
-    );
-  }
+  if (payload.pollCron) updateOrStore(SETTINGS_KEYS.pollCron, payload.pollCron);
+  if (payload.digestCron) updateOrStore(SETTINGS_KEYS.digestCron, payload.digestCron);
+  if (typeof payload.followupAfterDays === "number") updateOrStore(SETTINGS_KEYS.followupAfterDays, String(payload.followupAfterDays));
+  if (payload.syncFromDate !== undefined) updateOrStore(SETTINGS_KEYS.syncFromDate, payload.syncFromDate ?? "");
+  if (payload.modelEmail) updateOrStore(SETTINGS_KEYS.modelEmail, payload.modelEmail);
+  if (payload.modelCv) updateOrStore(SETTINGS_KEYS.modelCv, payload.modelCv);
+  if (payload.modelMatcher) updateOrStore(SETTINGS_KEYS.modelMatcher, payload.modelMatcher);
+  if (payload.modelExplorer) updateOrStore(SETTINGS_KEYS.modelExplorer, payload.modelExplorer);
+  if (payload.modelClassification) updateOrStore(SETTINGS_KEYS.modelClassification, payload.modelClassification);
 
   if (writes.length > 0) {
-    await Promise.all(writes);
+    try {
+      await Promise.all(writes);
+      console.log(`[Settings] Successfully updated ${writes.length} settings for ${userEmail}`);
+    } catch (err) {
+      console.error(`[Settings] Failed to update settings for ${userEmail}:`, err);
+      throw err;
+    }
   }
 
-  return getSettings();
+  return getSettings(userEmail);
 };

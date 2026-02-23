@@ -9,3 +9,13 @@ backend/prisma/dev.db
 backend/prisma/dev.db-journal
 coverage/
 *.log
+backend/uploads/
+check_settings.ts
+test_ollama.ts
+test_ollama_real.ts
+test_output.txt
+cv_text.txt
+careers.csv
+dev.db
+*.db
+*.db-journal

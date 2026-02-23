@@ -1,15 +1,16 @@
 import dayjs from "dayjs";
 import { prisma } from "../lib/prisma.js";
-import { getConnectedAccount, sendRawEmail } from "./gmailService.js";
+import { sendRawEmail } from "./gmailService.js";
 
 const formatLine = (label: string, value: string): string => `${label}: ${value}`;
 
-export const buildDigestBody = async (): Promise<string> => {
+export const buildDigestBody = async (userEmail: string): Promise<string> => {
   const since = dayjs().subtract(1, "day").toDate();
 
   const [newApplications, changedEvents, dueFollowups] = await Promise.all([
-    prisma.application.findMany({
+    (prisma as any).application.findMany({
       where: {
+        userEmail,
         createdAt: {
           gte: since,
         },
@@ -17,8 +18,9 @@ export const buildDigestBody = async (): Promise<string> => {
       orderBy: { createdAt: "desc" },
       take: 25,
     }),
-    prisma.applicationEvent.findMany({
+    (prisma as any).applicationEvent.findMany({
       where: {
+        application: { userEmail },
         createdAt: {
           gte: since,
         },
@@ -32,8 +34,9 @@ export const buildDigestBody = async (): Promise<string> => {
       orderBy: { createdAt: "desc" },
       take: 40,
     }),
-    prisma.followupTask.findMany({
+    (prisma as any).followupTask.findMany({
       where: {
+        application: { userEmail },
         state: "open",
         dueAt: {
           lte: new Date(),
@@ -45,7 +48,7 @@ export const buildDigestBody = async (): Promise<string> => {
       orderBy: { dueAt: "asc" },
       take: 40,
     }),
-  ]);
+  ]) as [any[], any[], any[]];
 
   const lines: string[] = [];
   lines.push("CV Tracker Daily Digest");
@@ -79,12 +82,21 @@ export const buildDigestBody = async (): Promise<string> => {
 };
 
 export const sendDigest = async (): Promise<{ sent: boolean; reason?: string }> => {
-  const account = await getConnectedAccount();
-  if (!account) {
-    return { sent: false, reason: "No connected Gmail account" };
+  const accounts = await prisma.gmailAccount.findMany();
+  if (accounts.length === 0) {
+    return { sent: false, reason: "No connected Gmail accounts" };
   }
 
-  const body = await buildDigestBody();
-  await sendRawEmail(account, account.email, "CV Tracker Daily Digest", body);
-  return { sent: true };
+  let sentCount = 0;
+  for (const account of accounts) {
+    try {
+      const body = await buildDigestBody(account.email);
+      await sendRawEmail(account, account.email, "CV Tracker Daily Digest", body);
+      sentCount++;
+    } catch (err) {
+      console.error(`Failed to send digest to ${account.email}:`, err);
+    }
+  }
+
+  return { sent: true, reason: `Sent ${sentCount} digests` };
 };
