@@ -133,9 +133,6 @@ nav {
   color: white;
 }
 
-.nav-link:last-child {
-  flex: 1 1 100%;
-}
 
 .nav-link.active small {
   color: rgba(255, 255, 255, 0.82);
@@ -774,17 +771,19 @@ code {
     padding: 0.6rem;
   }
 
+  /* Only on mobile: Settings takes full width */
   .nav-link:last-child {
     flex: 1 1 100%;
   }
 
-  /* Job Matcher sub-nav fix */
+  /* Only on mobile: Action buttons in panel headers scroll horizontally */
   .panel-header .actions {
     width: 100%;
     overflow-x: auto;
     padding-bottom: 0.5rem;
     display: flex;
-    flex-wrap: nowrap;
+    flex-wrap: nowrap !important;
+    /* Force nowrap for horizontal scroll */
     -webkit-overflow-scrolling: touch;
   }
 
