@@ -699,6 +699,23 @@ td {
   max-width: 100%;
 }
 
+.sub-nav-container {
+  display: flex;
+  gap: 0.25rem;
+  background: var(--stroke);
+  padding: 0.25rem;
+  border-radius: 14px;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sub-nav-container::-webkit-scrollbar {
+  display: none;
+}
+
 .preset-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -913,6 +930,16 @@ code {
   .save-btn {
     width: 100%;
     padding: 0.8rem;
+  }
+
+  .sub-nav-container {
+    width: 100%;
+    border-radius: 12px;
+  }
+
+  .panel-header {
+    flex-direction: row !important;
+    overflow-x: hidden;
   }
 
   /* Summary fix for mobile */

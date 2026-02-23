@@ -229,17 +229,17 @@ export const JobMatcherPage = () => {
         <div className="page-grid">
             {/* ── Top Control Panel ── */}
             <section className="panel" style={{ gridColumn: '1 / -1' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                    <div style={{ display: 'flex', gap: '0.4rem', background: 'var(--stroke)', padding: '0.3rem', borderRadius: '14px' }}>
+                <div className="panel-header" style={{ marginBottom: '1.5rem', display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div className="sub-nav-container">
                         {[
-                            { id: 'batch', label: '📂 Company Library' },
-                            { id: 'match', label: '🚀 Match Analysis' },
-                            { id: 'discover', label: '🔍 Opportunity Finder' },
+                            { id: 'batch', label: '📂 Library' },
+                            { id: 'match', label: '🚀 Matcher' },
+                            { id: 'discover', label: '🔍 Jobs' },
                         ].map(t => (
                             <button
                                 key={t.id}
                                 className={activeSubTab === t.id ? 'button' : 'button-secondary'}
-                                style={{ border: 'none', borderRadius: '11px', padding: '0.5rem 1.2rem' }}
+                                style={{ border: 'none', borderRadius: '11px', padding: '0.5rem 1rem', whiteSpace: 'nowrap' }}
                                 onClick={() => setActiveSubTab(t.id as any)}
                             >
                                 {t.label}
@@ -248,7 +248,7 @@ export const JobMatcherPage = () => {
                     </div>
 
                     {(result || discoveredJobs || url || csvRows.length > 0 || batchJob) && (
-                        <button onClick={clearData} className="button-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}>
+                        <button onClick={clearData} className="button-secondary" style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', flexShrink: 0 }}>
                             Reset Agent
                         </button>
                     )}
