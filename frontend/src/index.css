@@ -78,6 +78,12 @@ h1 {
   font-size: clamp(1.4rem, 2vw, 2rem);
 }
 
+.responsive-title {
+  font-size: clamp(1.4rem, 4vw, 2.2rem);
+  margin-bottom: 0.25rem;
+  line-height: 1.1;
+}
+
 .subtitle {
   margin: 0.4rem 0 0;
   color: var(--ink-muted);
@@ -136,6 +142,61 @@ nav {
 
 .nav-link.active small {
   color: rgba(255, 255, 255, 0.82);
+}
+
+/* Settings & Details Styling */
+details>summary {
+  list-style: none;
+}
+
+details>summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-summary {
+  padding: 1.25rem 1.5rem;
+  cursor: pointer;
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  user-select: none;
+  outline: none;
+}
+
+.settings-summary div {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.settings-details-content {
+  padding: 0 1.5rem 1.5rem 1.5rem;
+}
+
+.emoji-icon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.summary-hint {
+  font-size: 0.8rem;
+  opacity: 0.5;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 2rem;
+}
+
+.settings-save-actions {
+  margin-top: 2rem;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.save-btn {
+  padding: 0.75rem 2rem;
 }
 
 .page-grid {
@@ -635,6 +696,7 @@ td {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+  max-width: 100%;
 }
 
 .preset-grid {
@@ -732,13 +794,27 @@ code {
 }
 
 @media (max-width: 700px) {
+
+  /* Prevent horizontal scroll and zoom triggers */
+  html,
+  body {
+    overflow-x: hidden;
+    position: relative;
+    width: 100%;
+  }
+
   .shell {
-    width: calc(100% - 1rem);
+    width: calc(100% - 1.5rem);
     margin: 0.5rem auto 1rem;
+    padding: 0;
+  }
+
+  .page-grid {
+    gap: 0.75rem;
   }
 
   .masthead {
-    padding: 1rem;
+    padding: 0.75rem;
     gap: 0.75rem;
   }
 
@@ -766,9 +842,8 @@ code {
   }
 
   .nav-link {
-    flex: 1 1 calc(50% - 0.5rem);
-    text-align: left;
-    padding: 0.6rem;
+    flex: 1 1 calc(50% - 0.4rem);
+    padding: 0.5rem;
   }
 
   /* Only on mobile: Settings takes full width */
@@ -781,13 +856,67 @@ code {
     width: 100%;
     overflow-x: auto;
     padding-bottom: 0.5rem;
+    padding-right: 1.5rem;
+    /* Add clear space at the end of scroll */
     display: flex;
     flex-wrap: nowrap !important;
-    /* Force nowrap for horizontal scroll */
     -webkit-overflow-scrolling: touch;
+    gap: 0.75rem;
   }
 
   .panel-header .actions button {
     flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .responsive-title {
+    font-size: clamp(1.2rem, 5vw, 1.8rem);
+    word-wrap: break-word;
+  }
+
+  .panel {
+    padding: 0.75rem;
+    overflow-x: hidden;
+  }
+
+  /* Preset buttons horizontal scroll on mobile */
+  .preset-grid {
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    gap: 0.5rem;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .preset-grid button {
+    flex: 0 0 auto;
+    padding: 0.4rem 0.6rem;
+  }
+
+  /* Settings Specifics Overrides */
+  .settings-details-content {
+    padding: 0 0.75rem 0.75rem 0.75rem;
+  }
+
+  .settings-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+  }
+
+  .settings-save-actions {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: center;
+  }
+
+  .save-btn {
+    width: 100%;
+    padding: 0.8rem;
+  }
+
+  /* Summary fix for mobile */
+  summary div h2 {
+    font-size: 1.1rem !important;
   }
 }

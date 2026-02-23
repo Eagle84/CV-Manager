@@ -148,7 +148,7 @@ export const SettingsPage = () => {
       <section className="panel" style={{ gridColumn: '1 / -1' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 style={{ fontSize: '2rem', marginBottom: '0.25rem' }}>Configuration & LLM Registry</h1>
+            <h1 className="responsive-title">Configuration & LLM Registry</h1>
             <p className="panel-help">Manage your job search infrastructure, automation schedules, and AI models.</p>
           </div>
           <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
@@ -163,14 +163,14 @@ export const SettingsPage = () => {
       {/* LLM Agents Configuration */}
       <section className="panel" style={{ padding: 0 }}>
         <details style={{ width: '100%' }}>
-          <summary style={{ padding: '1.5rem', cursor: 'pointer', listStyle: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <summary className="settings-summary">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span style={{ fontSize: '1.5rem' }}>🧠</span>
+              <span className="emoji-icon">🧠</span>
               <h2 style={{ margin: 0 }}>AI Agent Models</h2>
             </div>
-            <span style={{ fontSize: '0.8rem', opacity: 0.5 }}>Click to show/hide models ▼</span>
+            <span className="summary-hint">Click to show/hide models ▼</span>
           </summary>
-          <div style={{ padding: '0 1.5rem 1.5rem 1.5rem' }}>
+          <div className="settings-details-content">
             <p className="panel-help" style={{ marginBottom: '1.5rem' }}>Assign specific LLM models for each specialized task explorer.</p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -282,7 +282,7 @@ export const SettingsPage = () => {
             Enable Advanced Cron Expressions
           </label>
 
-          <div style={{ display: 'grid', gridTemplateColumns: advancedMode ? '1fr 1fr' : '200px 200px', gap: '2rem' }}>
+          <div className="settings-grid">
             {!advancedMode ? (
               <>
                 <label>
@@ -311,8 +311,8 @@ export const SettingsPage = () => {
           </div>
         </div>
 
-        <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-          <button onClick={saveSettings} disabled={busy} style={{ padding: '0.75rem 2rem' }}>
+        <div className="settings-save-actions">
+          <button onClick={saveSettings} disabled={busy} className="save-btn">
             {pendingAction === "save" ? "Applying Changes..." : "🚀 Save Global Settings"}
           </button>
         </div>
