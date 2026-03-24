@@ -1,5 +1,7 @@
 import cors from "cors";
 import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
 import { z } from "zod";
 import { config, hasGoogleConfig } from "./config.js";
 import {
@@ -719,6 +721,14 @@ export const createApp = (): express.Express => {
     }),
   );
 
+
+  // Serve built frontend static files and SPA fallback
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const frontendDist = path.resolve(__dirname, "../../frontend/dist");
+  app.use(express.static(frontendDist));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(frontendDist, "index.html"));
+  });
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     const message = error instanceof Error ? error.message : "Unexpected server error";
