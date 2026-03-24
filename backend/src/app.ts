@@ -21,7 +21,7 @@ import {
 import { completeFollowup, listFollowups } from "./services/followupService.js";
 import { rescheduleIfNeeded } from "./scheduler.js";
 import { getSettings, updateSettings } from "./services/settingsService.js";
-import { runSync } from "./services/syncService.js";
+import { runSync, type SyncResult } from "./services/syncService.js";
 import multer from "multer";
 import { listCvs, deleteCv, setDefaultCv, processCvUpload } from "./services/cvService.js";
 import { analyzeJobUrl, findMatchingJobsOnPage, listTargetCompanies, saveTargetCompanies } from "./services/analyzerService.js";
@@ -46,6 +46,18 @@ interface BatchJob {
 }
 
 const batchJobs = new Map<string, BatchJob>();
+
+interface SyncJob {
+  id: string;
+  status: "running" | "done" | "error";
+  type: "sync" | "reset-and-sync";
+  result?: any;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+const syncJobs = new Map<string, SyncJob>();
 
 
 const upload = multer({ dest: "uploads/cvs" });
@@ -270,13 +282,26 @@ export const createApp = (): express.Express => {
 
   app.post(
     "/api/sync/run",
-    asyncHandler(async (_req, res) => {
-      const result = await runSync();
-      if (!result.ok) {
-        res.status(400).json(result);
-        return;
-      }
-      res.json(result);
+    asyncHandler(async (req, res) => {
+      const userEmail = await resolveUserEmail(req);
+      if (!userEmail) { res.status(401).json({ error: "No active account" }); return; }
+
+      const jobId = randomUUID();
+      const job: SyncJob = { id: jobId, status: "running", type: "sync", startedAt: new Date().toISOString() };
+      syncJobs.set(jobId, job);
+
+      runSync().then((result) => {
+        job.status = result.ok ? "done" : "error";
+        job.result = result;
+        if (!result.ok) job.error = result.reason;
+        job.finishedAt = new Date().toISOString();
+      }).catch((err) => {
+        job.status = "error";
+        job.error = String(err);
+        job.finishedAt = new Date().toISOString();
+      });
+
+      res.status(202).json({ jobId });
     }),
   );
 
@@ -285,24 +310,39 @@ export const createApp = (): express.Express => {
     asyncHandler(async (req, res) => {
       const userEmail = await resolveUserEmail(req);
       if (!userEmail) { res.status(401).json({ error: "No active account" }); return; }
-      const reset = await resetTrackingData(userEmail);
-      const sync = await runSync();
 
-      if (!sync.ok) {
-        res.status(400).json({
-          ok: false,
-          reason: sync.reason,
-          reset,
-          stats: sync.stats,
-        });
+      const jobId = randomUUID();
+      const job: SyncJob = { id: jobId, status: "running", type: "reset-and-sync", startedAt: new Date().toISOString() };
+      syncJobs.set(jobId, job);
+
+      (async () => {
+        try {
+          const reset = await resetTrackingData(userEmail);
+          const sync = await runSync();
+          job.status = sync.ok ? "done" : "error";
+          job.result = { ok: sync.ok, reset, sync };
+          if (!sync.ok) job.error = sync.reason;
+        } catch (err) {
+          job.status = "error";
+          job.error = String(err);
+        } finally {
+          job.finishedAt = new Date().toISOString();
+        }
+      })();
+
+      res.status(202).json({ jobId });
+    }),
+  );
+
+  app.get(
+    "/api/sync/status/:jobId",
+    asyncHandler(async (req, res) => {
+      const job = syncJobs.get(String(req.params.jobId));
+      if (!job) {
+        res.status(404).json({ error: "Job not found" });
         return;
       }
-
-      res.json({
-        ok: true,
-        reset,
-        sync,
-      });
+      res.json(job);
     }),
   );
 

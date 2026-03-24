@@ -154,6 +154,16 @@ export interface SyncResponse {
   };
 }
 
+export interface SyncJobStatus {
+  id: string;
+  status: "running" | "done" | "error";
+  type: "sync" | "reset-and-sync";
+  result?: SyncResponse | ResetAndSyncResponse;
+  error?: string;
+  startedAt: string;
+  finishedAt?: string;
+}
+
 export interface ResetAndSyncResponse {
   ok: boolean;
   reason?: string;
@@ -302,18 +312,20 @@ export const apiClient = {
   disconnectGoogle: async (email: string): Promise<void> => {
     await api.post("/api/auth/google/disconnect", { email });
   },
-  runSync: async (): Promise<SyncResponse> => {
-    const response = await api.post<SyncResponse>("/api/sync/run", undefined, { timeout: 600000 });
+  runSync: async (): Promise<{ jobId: string }> => {
+    const response = await api.post<{ jobId: string }>("/api/sync/run");
     return response.data;
   },
   sendDigest: async (): Promise<{ sent: boolean; reason?: string }> => {
     const response = await api.post<{ sent: boolean; reason?: string }>("/api/digest/send");
     return response.data;
   },
-  resetAndSync: async (): Promise<ResetAndSyncResponse> => {
-    const response = await api.post<ResetAndSyncResponse>("/api/data/reset-and-sync", undefined, {
-      timeout: 900000,
-    });
+  resetAndSync: async (): Promise<{ jobId: string }> => {
+    const response = await api.post<{ jobId: string }>("/api/data/reset-and-sync");
+    return response.data;
+  },
+  getSyncJobStatus: async (jobId: string): Promise<SyncJobStatus> => {
+    const response = await api.get<SyncJobStatus>(`/api/sync/status/${jobId}`);
     return response.data;
   },
   fetchCvs: async (): Promise<CvDto[]> => {

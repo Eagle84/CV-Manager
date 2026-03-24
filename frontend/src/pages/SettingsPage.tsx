@@ -71,6 +71,7 @@ export const SettingsPage = () => {
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
   const [message, setMessage] = useState<{ text: string; type: 'ok' | 'error' } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncJobId, setSyncJobId] = useState<string | null>(null);
 
   const busy = pendingAction !== null;
 
@@ -110,6 +111,36 @@ export const SettingsPage = () => {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!syncJobId) return;
+    const interval = setInterval(async () => {
+      try {
+        const job = await apiClient.getSyncJobStatus(syncJobId);
+        if (job.status !== "running") {
+          clearInterval(interval);
+          setSyncJobId(null);
+          setPendingAction(null);
+          if (job.status === "done") {
+            const result = job.result as any;
+            const stats = result?.stats ?? result?.sync?.stats;
+            const scanned = stats?.scanned ?? "?";
+            const updated = stats?.applicationsCreatedOrUpdated ?? "?";
+            setMessage({ text: `Sync complete: ${scanned} emails scanned, ${updated} applications updated.`, type: 'ok' });
+            if (job.type === "reset-and-sync") void load();
+          } else {
+            setError(job.error ?? "Sync failed");
+          }
+        }
+      } catch (err) {
+        clearInterval(interval);
+        setSyncJobId(null);
+        setPendingAction(null);
+        setError(err instanceof Error ? err.message : "Failed to check sync status");
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [syncJobId]);
 
   const handleAction = async (action: PendingAction, fn: () => Promise<void>) => {
     try {
@@ -326,7 +357,17 @@ export const SettingsPage = () => {
             <h3>Manual Triggers</h3>
             <p className="panel-help" style={{ marginBottom: '1rem' }}>Trigger immediate system actions without waiting for schedule.</p>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button disabled={busy} style={{ flex: 1 }} onClick={() => handleAction("sync", async () => { const res = await apiClient.runSync(); setMessage({ text: `Sync Ok: Scanned ${res.stats.scanned} IDs`, type: 'ok' }); })}>Run Sync</button>
+              <button disabled={busy} style={{ flex: 1 }} onClick={async () => {
+                try {
+                  setPendingAction("sync"); setError(null); setMessage(null);
+                  const { jobId } = await apiClient.runSync();
+                  setSyncJobId(jobId);
+                  setMessage({ text: "Sync started, processing emails in background...", type: 'ok' });
+                } catch (err) {
+                  setPendingAction(null);
+                  setError(err instanceof Error ? err.message : "Failed to start sync");
+                }
+              }}>{pendingAction === "sync" ? "Syncing..." : "Run Sync"}</button>
               <button className="button-secondary" disabled={busy} style={{ flex: 1 }} onClick={() => handleAction("digest", async () => { await apiClient.sendDigest(); setMessage({ text: "Digest sent.", type: 'ok' }); })}>Send Digest</button>
             </div>
           </article>
@@ -334,9 +375,18 @@ export const SettingsPage = () => {
           <article className="panel highlighted" style={{ margin: 0, borderLeft: '4px solid #ef4444' }}>
             <h3 style={{ color: '#ef4444' }}>Danger Zone</h3>
             <p className="panel-help" style={{ marginBottom: '1rem' }}>Erase all application data and rebuild from Gmail inbox.</p>
-            <button className="danger" disabled={busy} style={{ width: '100%' }} onClick={() => handleAction("reset_sync", async () => { if (confirm("This will erase ALL tracked applications. Continue?")) { await apiClient.resetAndSync(); load(); setMessage({ text: "System fully reset and synchronized.", type: 'ok' }); } })}>
-              Reset & Full Re-sync
-            </button>
+            <button className="danger" disabled={busy} style={{ width: '100%' }} onClick={async () => {
+              if (!confirm("This will erase ALL tracked applications. Continue?")) return;
+              try {
+                setPendingAction("reset_sync"); setError(null); setMessage(null);
+                const { jobId } = await apiClient.resetAndSync();
+                setSyncJobId(jobId);
+                setMessage({ text: "Reset started, re-importing all emails in background...", type: 'ok' });
+              } catch (err) {
+                setPendingAction(null);
+                setError(err instanceof Error ? err.message : "Failed to start reset");
+              }
+            }}>{pendingAction === "reset_sync" ? "Resetting..." : "Reset & Full Re-sync"}</button>
           </article>
         </div>
       </section >

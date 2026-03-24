@@ -4,6 +4,7 @@ node_modules/
 !.env.example
 backend/dist/
 frontend/dist/
+frontend/.next/
 shared/dist/
 backend/prisma/dev.db
 backend/prisma/dev.db-journal
