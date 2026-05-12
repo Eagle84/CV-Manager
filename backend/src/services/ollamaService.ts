@@ -20,6 +20,11 @@ const ollamaExtractionSchema = z.object({
   status: statusSchema.nullable(),
   normalizedSubjectKey: z.string().nullable(),
   confidence: z.number().min(0).max(1),
+  // Extended fields — optional so older/smaller models that omit them still parse
+  interviewType: z.enum(["phone", "video", "onsite"]).nullable().optional(),
+  interviewDate: z.string().nullable().optional(),
+  contactName: z.string().nullable().optional(),
+  keyPhrasesFound: z.array(z.string()).optional(),
 });
 
 const cvExtractionSchema = z.object({
@@ -100,32 +105,110 @@ export const extractJsonCandidate = (text: string): string | null => {
   return cleaned.slice(start, end + 1);
 };
 
+const truncateBody = (body: string): string => {
+  if (body.length <= 4000) return body;
+  return `${body.slice(0, 3000)}\n...[truncated]...\n${body.slice(-1000)}`;
+};
+
 const buildPrompt = (input: OllamaExtractionInput): string => {
-  return [
-    "You are an email extraction engine.",
-    "Extract information from hiring acknowledgement email context and return ONLY valid JSON.",
-    "Schema:",
-    "{",
-    '  "include": boolean,',
-    '  "companyName": string | null,',
-    '  "companyDomain": string | null,',
-    '  "roleTitle": string | null,',
-    '  "status": "submitted" | "received" | "rejected" | "interview" | "assessment" | "offer" | "withdrawn" | "unclassified" | null,',
-    '  "normalizedSubjectKey": string | null,',
-    '  "confidence": number',
-    "}",
-    "Rules:",
-    "1) include=true only for job application process emails.",
-    "2) If subject says 'Thanks for applying', status is usually 'received' unless conflicting evidence.",
-    "3) normalizedSubjectKey should be stable for small variations and lowercase with words separated by dashes.",
-    "4) If unknown, return null for field values.",
-    "",
-    `subject: ${input.subject}`,
-    `from_email: ${input.fromEmail}`,
-    `from_display_name: ${input.fromDisplayName}`,
-    `sender_domain: ${input.senderDomain}`,
-    `body: ${input.body.slice(0, 6000)}`,
-  ].join("\n");
+  return `You are an email classification engine for a job application tracker.
+Analyze the email below and return ONLY a single valid JSON object — no explanation, no markdown, no code fences.
+
+OUTPUT SCHEMA:
+{
+  "include": boolean,
+  "companyName": string | null,
+  "companyDomain": string | null,
+  "roleTitle": string | null,
+  "status": "received" | "rejected" | "interview" | "assessment" | "offer" | "withdrawn" | "submitted" | "unclassified" | null,
+  "normalizedSubjectKey": string | null,
+  "confidence": number (0.0-1.0),
+  "interviewType": "phone" | "video" | "onsite" | null,
+  "interviewDate": "YYYY-MM-DD" | null,
+  "contactName": string | null,
+  "keyPhrasesFound": string[]
+}
+
+FIELD RULES:
+- include: true ONLY for job application process emails (confirmation, rejection, interview invite, assessment, offer). Set false for newsletters, promotions, LinkedIn notifications, bank alerts, account security emails, shipping confirmations, social media, unrelated calendar invites.
+- status: "received" for initial acknowledgements. "interview" when scheduling/confirming a meeting. "assessment" for tests/coding challenges. "offer" for job offer or compensation discussion. "rejected" for any decline. "withdrawn" only if candidate withdrew. "unclassified" if unclear.
+- normalizedSubjectKey: Lowercase, words separated by dashes, strip "Re:", "Fwd:", "Thanks for applying", special chars. Max 12 words. Example: "software-engineer-application-acme-corp".
+- interviewType: "phone" for phone screen/call, "video" for Zoom/Teams/video call, "onsite" for in-person. Null if not an interview email.
+- interviewDate: ISO date (YYYY-MM-DD) of the interview if explicitly mentioned. Null if not mentioned.
+- contactName: Name of the recruiter or hiring manager if mentioned in signature or body. Null if not found.
+- keyPhrasesFound: Up to 5 short verbatim phrases from the email that most clearly indicate the classification. Empty array if none.
+- confidence: 0.95 for clear unambiguous signals, 0.75 for moderate, 0.5 for weak or mixed signals.
+
+--- EXAMPLE 1: received ---
+subject: Thanks for applying to Acme Corp
+from_email: careers@acme.com
+from_display_name: Acme Corp Recruiting
+sender_domain: acme.com
+body: Hi Alex, we have received your application for the Software Engineer position. We will be in touch if your profile matches our needs.
+OUTPUT: {"include":true,"companyName":"Acme Corp","companyDomain":"acme.com","roleTitle":"Software Engineer","status":"received","normalizedSubjectKey":"acme-corp-software-engineer","confidence":0.95,"interviewType":null,"interviewDate":null,"contactName":null,"keyPhrasesFound":["we have received your application","will be in touch"]}
+
+--- EXAMPLE 2: rejected ---
+subject: Your application to DataFlow Inc
+from_email: noreply@dataflow.io
+from_display_name: DataFlow Recruiting
+sender_domain: dataflow.io
+body: Dear Alex, thank you for taking the time to apply. After careful consideration, we have decided not to move forward with your application at this time.
+OUTPUT: {"include":true,"companyName":"DataFlow Inc","companyDomain":"dataflow.io","roleTitle":null,"status":"rejected","normalizedSubjectKey":"dataflow-inc-application","confidence":0.95,"interviewType":null,"interviewDate":null,"contactName":null,"keyPhrasesFound":["after careful consideration","decided not to move forward"]}
+
+--- EXAMPLE 3: interview (phone) ---
+subject: Interview Invitation - Backend Engineer at TechBase
+from_email: recruiting@techbase.com
+from_display_name: Sarah - TechBase
+sender_domain: techbase.com
+body: Hi Alex, I'm Sarah from TechBase recruiting. We'd love to schedule a 30-minute phone screen with you for the Backend Engineer role. Are you available this Thursday or Friday between 2-5pm?
+OUTPUT: {"include":true,"companyName":"TechBase","companyDomain":"techbase.com","roleTitle":"Backend Engineer","status":"interview","normalizedSubjectKey":"interview-invitation-backend-engineer-techbase","confidence":0.95,"interviewType":"phone","interviewDate":null,"contactName":"Sarah","keyPhrasesFound":["schedule a 30-minute phone screen","are you available"]}
+
+--- EXAMPLE 4: assessment ---
+subject: Technical Assessment - Software Engineer - CloudNine
+from_email: noreply@cloudnine.io
+from_display_name: CloudNine Hiring
+sender_domain: cloudnine.io
+body: Congratulations on moving to the next stage! Please complete the attached coding challenge within 72 hours. The test covers data structures and algorithms.
+OUTPUT: {"include":true,"companyName":"CloudNine","companyDomain":"cloudnine.io","roleTitle":"Software Engineer","status":"assessment","normalizedSubjectKey":"technical-assessment-software-engineer-cloudnine","confidence":0.95,"interviewType":null,"interviewDate":null,"contactName":null,"keyPhrasesFound":["complete the attached coding challenge","within 72 hours"]}
+
+--- EXAMPLE 5: offer ---
+subject: Offer Letter - Senior Engineer - Nexus Systems
+from_email: hr@nexussystems.com
+from_display_name: Nexus Systems HR
+sender_domain: nexussystems.com
+body: Dear Alex, we are delighted to extend a formal offer for the Senior Engineer role. Your compensation package includes a base salary of $130,000. Please sign and return the attached offer letter by Friday.
+OUTPUT: {"include":true,"companyName":"Nexus Systems","companyDomain":"nexussystems.com","roleTitle":"Senior Engineer","status":"offer","normalizedSubjectKey":"offer-letter-senior-engineer-nexus-systems","confidence":0.95,"interviewType":null,"interviewDate":null,"contactName":null,"keyPhrasesFound":["formal offer","compensation package","offer letter"]}
+
+--- EXAMPLE 6: include=false (LinkedIn notification) ---
+subject: Alex, 3 people viewed your profile
+from_email: jobs-noreply@linkedin.com
+from_display_name: LinkedIn
+sender_domain: linkedin.com
+body: You had 3 profile views this week. Check out who's looking at your profile. Upgrade to Premium to see all viewers.
+OUTPUT: {"include":false,"companyName":null,"companyDomain":null,"roleTitle":null,"status":null,"normalizedSubjectKey":null,"confidence":0.99,"interviewType":null,"interviewDate":null,"contactName":null,"keyPhrasesFound":[]}
+
+--- EXAMPLE 7: include=false (promo/newsletter) ---
+subject: 50% off your next order - Shop now!
+from_email: noreply@shopbrand.com
+from_display_name: ShopBrand Deals
+sender_domain: shopbrand.com
+body: Exclusive deal just for you. Use code SAVE50 at checkout. Limited time only.
+OUTPUT: {"include":false,"companyName":null,"companyDomain":null,"roleTitle":null,"status":null,"normalizedSubjectKey":null,"confidence":0.99,"interviewType":null,"interviewDate":null,"contactName":null,"keyPhrasesFound":[]}
+
+--- EXAMPLE 8: unclassified (cold recruiter outreach) ---
+subject: Exciting opportunity at InnovateTech
+from_email: recruiter@innovatetech.com
+from_display_name: Mark - InnovateTech
+sender_domain: innovatetech.com
+body: Hi! I came across your profile and think you'd be a great fit for a Senior Developer role we have open. Would you be interested in learning more?
+OUTPUT: {"include":true,"companyName":"InnovateTech","companyDomain":"innovatetech.com","roleTitle":"Senior Developer","status":"unclassified","normalizedSubjectKey":"opportunity-innovatetech-senior-developer","confidence":0.6,"interviewType":null,"interviewDate":null,"contactName":"Mark","keyPhrasesFound":["would you be interested"]}
+
+NOW CLASSIFY THIS EMAIL:
+subject: ${input.subject}
+from_email: ${input.fromEmail}
+from_display_name: ${input.fromDisplayName}
+sender_domain: ${input.senderDomain}
+body: ${truncateBody(input.body)}`;
 };
 
 const callOllama = async (

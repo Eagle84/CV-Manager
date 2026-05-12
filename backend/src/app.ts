@@ -722,13 +722,15 @@ export const createApp = (): express.Express => {
   );
 
 
-  // Serve built frontend static files and SPA fallback
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const frontendDist = path.resolve(__dirname, "../../frontend/dist");
-  app.use(express.static(frontendDist));
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(frontendDist, "index.html"));
-  });
+  // Serve built frontend static files and SPA fallback (skip in dev)
+  if (process.env.NODE_ENV !== "development") {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const frontendDist = path.resolve(__dirname, "../../frontend/dist");
+    app.use(express.static(frontendDist));
+    app.get(/^(?!\/api).*/, (_req, res) => {
+      res.sendFile(path.join(frontendDist, "index.html"));
+    });
+  }
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     const message = error instanceof Error ? error.message : "Unexpected server error";

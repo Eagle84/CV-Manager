@@ -5,26 +5,69 @@ import type { ApplicationDetail, ApplicationSummary } from "shared";
 
 const statuses = ["submitted", "received", "interview", "assessment", "offer", "rejected", "withdrawn"];
 
-type InferredDecision = "approved" | "rejected" | "pending";
+const KEY_PHRASES_BY_STATUS: Record<string, string[]> = {
+  rejected: [
+    "after careful consideration",
+    "we will not be moving forward",
+    "not been selected for",
+    "decided to move forward with other candidates",
+    "your application was not successful",
+    "we've decided to go in a different direction",
+    "regret to inform",
+    "not moving forward",
+    "unfortunately",
+    "declined",
+  ],
+  interview: [
+    "phone screen",
+    "phone interview",
+    "video interview",
+    "technical interview",
+    "schedule an interview",
+    "schedule a call",
+    "would like to speak with you",
+    "availability for",
+    "next round",
+    "introductory call",
+    "recruiter call",
+  ],
+  assessment: [
+    "coding challenge",
+    "technical assessment",
+    "take-home assignment",
+    "technical challenge",
+    "online assessment",
+    "hackerrank",
+    "codility",
+    "codesignal",
+    "complete the following",
+  ],
+  offer: [
+    "pleased to offer you",
+    "formal offer",
+    "offer letter",
+    "compensation package",
+    "welcome to the team",
+    "welcome aboard",
+    "you have been selected",
+    "start date",
+  ],
+  received: [
+    "we have received your application",
+    "your application has been received",
+    "thank you for applying",
+    "successfully submitted",
+    "application is under review",
+    "will be in touch",
+  ],
+};
 
-const APPROVED_KEYWORDS = [
-  "approved",
-  "selected",
-  "accepted",
-  "offer",
-  "moving forward with your application",
-  "pleased to inform",
-];
-
-const REJECTED_KEYWORDS = [
-  "rejected",
-  "not selected",
-  "not moving forward",
-  "regret to inform",
-  "declined",
-  "position has been filled",
-  "unfortunately",
-];
+const extractKeyPhrases = (text: string, classification: string): string[] => {
+  const lower = text.toLowerCase();
+  return (KEY_PHRASES_BY_STATUS[classification] ?? [])
+    .filter((phrase) => lower.includes(phrase))
+    .slice(0, 4);
+};
 
 const toPlainEmailText = (bodyText: string, bodyHtml: string): string => {
   if (bodyText.trim().length > 0) {
@@ -41,30 +84,6 @@ const toPlainEmailText = (bodyText: string, bodyHtml: string): string => {
     .replace(/&gt;/gi, ">")
     .replace(/\s+/g, " ")
     .trim();
-};
-
-const inferDecision = (classification: string, text: string): InferredDecision => {
-  const normalized = text.toLowerCase();
-
-  if (classification === "rejected" || REJECTED_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
-    return "rejected";
-  }
-
-  if (classification === "offer" || APPROVED_KEYWORDS.some((keyword) => normalized.includes(keyword))) {
-    return "approved";
-  }
-
-  return "pending";
-};
-
-const getDecisionLabel = (decision: InferredDecision): string => {
-  if (decision === "approved") {
-    return "Approved";
-  }
-  if (decision === "rejected") {
-    return "Rejected";
-  }
-  return "Pending Review";
 };
 
 export const ApplicationsPage = () => {
@@ -370,20 +389,42 @@ export const ApplicationsPage = () => {
             <ul className="email-list">
               {detail.emails.map((email) => {
                 const plainText = toPlainEmailText(email.bodyText, email.bodyHtml);
-                const decision = inferDecision(email.classification, `${email.subject}\n${plainText}`);
                 const emailDate = email.receivedAt ?? email.sentAt;
+                const keyPhrases = extractKeyPhrases(plainText, email.classification);
 
                 return (
                   <li key={email.id} className="email-card">
                     <div className="email-card-head">
                       <strong>{email.subject || "(No subject)"}</strong>
-                      <span className={`decision-chip decision-${decision}`}>{getDecisionLabel(decision)}</span>
+                      {emailDate ? (
+                        <small className="email-date">{dayjs(emailDate).format("MMM D, YYYY HH:mm")}</small>
+                      ) : null}
                     </div>
                     <p className="email-meta">
-                      From {email.fromEmail || "unknown"} to {email.toEmail || "unknown"}{" "}
-                      {emailDate ? `| ${dayjs(emailDate).format("YYYY-MM-DD HH:mm")}` : ""}
+                      From <code>{email.fromEmail || "unknown"}</code>
+                      {email.toEmail ? <> to <code>{email.toEmail}</code></> : null}
                     </p>
-                    <p className="email-meta">Classifier status: <code>{email.classification}</code></p>
+                    <div className="email-card-classification">
+                      <span className={`chip chip-${email.classification}`}>{email.classification}</span>
+                      {email.aiConfidence != null && email.aiConfidence > 0 ? (
+                        <span className="confidence-badge">{Math.round(email.aiConfidence * 100)}% confidence</span>
+                      ) : null}
+                      {email.fromEmail ? (
+                        <a
+                          className="reply-link"
+                          href={`mailto:${email.fromEmail}?subject=Re: ${encodeURIComponent(email.subject ?? "")}`}
+                        >
+                          Reply
+                        </a>
+                      ) : null}
+                    </div>
+                    {keyPhrases.length > 0 ? (
+                      <div className="email-key-phrases">
+                        {keyPhrases.map((phrase) => (
+                          <span key={phrase} className="key-phrase-tag">{phrase}</span>
+                        ))}
+                      </div>
+                    ) : null}
                     <details>
                       <summary>View Email Content</summary>
                       <pre className="email-body">{plainText || "No readable content found for this email."}</pre>

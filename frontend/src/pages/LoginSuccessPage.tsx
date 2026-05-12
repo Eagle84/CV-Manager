@@ -1,17 +1,22 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { setSessionToken, setActiveUserEmail } from "../lib/api";
+import { setSessionToken, setActiveUserEmail } from "../lib/api.ts";
 
 export const LoginSuccessPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const hasProcessed = useRef(false);
 
   useEffect(() => {
+    // Guard against React 18 StrictMode double-invocation:
+    // the ref persists across the simulated unmount/remount, so we only process once.
+    if (hasProcessed.current) return;
+    hasProcessed.current = true;
+
     const token = searchParams.get("token");
     const email = searchParams.get("email");
 
     if (token && email) {
-      console.log("Login success, setting credentials and navigating...");
       setSessionToken(token);
       setActiveUserEmail(email);
       navigate("/dashboard", { replace: true });

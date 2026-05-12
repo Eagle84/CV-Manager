@@ -3,6 +3,11 @@ import type { ApplicationDetail, ApplicationSummary, DashboardSummary, Duplicate
 
 const SESSION_TOKEN_KEY = "cv_manager_session_token";
 const ACTIVE_USER_EMAIL_KEY = "cv_manager_active_email";
+const configuredApiBase = typeof __VITE_API_BASE__ === "string" ? __VITE_API_BASE__.trim() : "";
+const runtimeOrigin =
+  typeof window !== "undefined" && window.location?.origin ? window.location.origin : "http://127.0.0.1:8787";
+const defaultApiBase = runtimeOrigin;
+const normalizedConfiguredBase = configuredApiBase.replace(/\/+$/, "").replace(/\/api$/i, "");
 
 export const setSessionToken = (token: string | null) => {
   if (token) {
@@ -29,7 +34,7 @@ export const getActiveUserEmail = (): string | null => {
 };
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8787",
+  baseURL: normalizedConfiguredBase || defaultApiBase,
   timeout: 60000,
 });
 

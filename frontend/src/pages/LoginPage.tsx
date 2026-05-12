@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { apiClient, getSessionToken } from "../lib/api";
+import { apiClient, getSessionToken } from "../lib/api.ts";
 
 export const LoginPage: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -38,9 +38,10 @@ export const LoginPage: React.FC = () => {
       const url = await apiClient.getGoogleAuthUrl("login");
       clearTimeout(timeout);
       window.location.href = url;
-    } catch (err) {
+    } catch (err: any) {
       clearTimeout(timeout);
-      setError("Failed to initiate Google Login. Please try again.");
+      const apiMsg = err?.response?.data?.error;
+      setError(apiMsg || "Failed to initiate Google Login. Please try again.");
       setLoading(false);
     }
   };

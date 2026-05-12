@@ -2,27 +2,12 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { apiClient, type SettingsDto } from "../lib/api.ts";
 
-type PendingAction = "connect" | "disconnect" | "save" | "sync" | "digest" | "reset_sync" | null;
+type PendingAction = "save" | "sync" | "digest" | "reset_sync" | null;
 
 const schedulePresets = [
-  {
-    label: "High activity",
-    description: "Poll every 5 mins",
-    pollMinutes: 5,
-    digestTime: "08:00",
-  },
-  {
-    label: "Balanced",
-    description: "Poll every 15 mins",
-    pollMinutes: 15,
-    digestTime: "09:00",
-  },
-  {
-    label: "Light usage",
-    description: "Poll every 30 mins",
-    pollMinutes: 30,
-    digestTime: "10:00",
-  },
+  { label: "High activity", pollMinutes: 5, digestTime: "08:00" },
+  { label: "Balanced", pollMinutes: 15, digestTime: "09:00" },
+  { label: "Light usage", pollMinutes: 30, digestTime: "10:00" },
 ];
 
 const parsePollCron = (value: string): number | null => {
@@ -30,7 +15,7 @@ const parsePollCron = (value: string): number | null => {
   const everyMinutes = value.match(/^\*\/(\d{1,2}) \* \* \* \*$/);
   if (!everyMinutes) return null;
   const minutes = Number(everyMinutes[1]);
-  return (Number.isInteger(minutes) && minutes >= 1 && minutes <= 60) ? minutes : null;
+  return Number.isInteger(minutes) && minutes >= 1 && minutes <= 60 ? minutes : null;
 };
 
 const parseDigestCron = (value: string): string | null => {
@@ -38,21 +23,27 @@ const parseDigestCron = (value: string): string | null => {
   if (!match) return null;
   const minute = Number(match[1]);
   const hour = Number(match[2]);
-  if (!Number.isInteger(minute) || !Number.isInteger(hour) || minute < 0 || minute > 59 || hour < 0 || hour > 23) return null;
+  if (!Number.isInteger(minute) || !Number.isInteger(hour) || minute < 0 || minute > 59 || hour < 0 || hour > 23) {
+    return null;
+  }
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 };
 
 const toPollCron = (minutes: number): string => (minutes === 60 ? "0 * * * *" : `*/${minutes} * * * *`);
-
 const toDigestCron = (timeValue: string): string => {
   const [hour, minute] = timeValue.split(":").map((part) => Number(part));
   return `${minute || 0} ${hour || 9} * * *`;
 };
 
+const friendlyError = (err: unknown): string => {
+  const apiError = axios.isAxiosError<{ error?: string }>(err) ? err.response?.data?.error : undefined;
+  if (apiError) return apiError;
+  if (err instanceof Error) return err.message;
+  return "Action failed";
+};
+
 export const SettingsPage = () => {
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-
-  // Form State
   const [pollIntervalMinutes, setPollIntervalMinutes] = useState(15);
   const [digestTime, setDigestTime] = useState("09:00");
   const [pollCron, setPollCron] = useState("*/15 * * * *");
@@ -60,16 +51,13 @@ export const SettingsPage = () => {
   const [advancedMode, setAdvancedMode] = useState(false);
   const [followupAfterDays, setFollowupAfterDays] = useState(7);
   const [syncFromDate, setSyncFromDate] = useState<string | null>(null);
-
-  // AI Models State
   const [modelEmail, setModelEmail] = useState("");
   const [modelCv, setModelCv] = useState("");
   const [modelMatcher, setModelMatcher] = useState("");
   const [modelExplorer, setModelExplorer] = useState("");
   const [modelClassification, setModelClassification] = useState("");
-
   const [pendingAction, setPendingAction] = useState<PendingAction>(null);
-  const [message, setMessage] = useState<{ text: string; type: 'ok' | 'error' } | null>(null);
+  const [message, setMessage] = useState<{ text: string; type: "ok" | "error" } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncJobId, setSyncJobId] = useState<string | null>(null);
 
@@ -99,297 +87,259 @@ export const SettingsPage = () => {
 
   const load = async () => {
     try {
-      const [settingsRes, modelsRes] = await Promise.all([
-        apiClient.getSettings(),
-        apiClient.getOllamaModels()
-      ]);
+      const [settingsRes, modelsRes] = await Promise.all([apiClient.getSettings(), apiClient.getOllamaModels()]);
       syncUiFromSettings(settingsRes);
       setOllamaModels(modelsRes);
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load settings");
+      setError(friendlyError(err));
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    void load();
+  }, []);
 
   useEffect(() => {
     if (!syncJobId) return;
+
     const interval = setInterval(async () => {
       try {
         const job = await apiClient.getSyncJobStatus(syncJobId);
-        if (job.status !== "running") {
-          clearInterval(interval);
-          setSyncJobId(null);
-          setPendingAction(null);
-          if (job.status === "done") {
-            const result = job.result as any;
-            const stats = result?.stats ?? result?.sync?.stats;
-            const scanned = stats?.scanned ?? "?";
-            const updated = stats?.applicationsCreatedOrUpdated ?? "?";
-            setMessage({ text: `Sync complete: ${scanned} emails scanned, ${updated} applications updated.`, type: 'ok' });
-            if (job.type === "reset-and-sync") void load();
-          } else {
-            setError(job.error ?? "Sync failed");
-          }
+        if (job.status === "running") return;
+
+        clearInterval(interval);
+        setSyncJobId(null);
+        setPendingAction(null);
+
+        if (job.status === "done") {
+          const result = job.result as any;
+          const stats = result?.stats ?? result?.sync?.stats;
+          const scanned = stats?.scanned ?? "?";
+          const updated = stats?.applicationsCreatedOrUpdated ?? "?";
+          setMessage({ text: `Sync complete: ${scanned} emails scanned, ${updated} applications updated.`, type: "ok" });
+          if (job.type === "reset-and-sync") void load();
+          return;
         }
+
+        setError(job.error ?? "Sync failed");
       } catch (err) {
         clearInterval(interval);
         setSyncJobId(null);
         setPendingAction(null);
-        setError(err instanceof Error ? err.message : "Failed to check sync status");
+        setError(friendlyError(err));
       }
     }, 3000);
+
     return () => clearInterval(interval);
   }, [syncJobId]);
 
-  const handleAction = async (action: PendingAction, fn: () => Promise<void>) => {
+  const runAction = async (action: PendingAction, fn: () => Promise<void>) => {
     try {
       setPendingAction(action);
       setError(null);
       setMessage(null);
       await fn();
+      if (action !== "sync" && action !== "reset_sync") {
+        setPendingAction(null);
+      }
     } catch (err) {
-      const apiError = axios.isAxiosError<{ error?: string }>(err) && err.response?.data?.error;
-      setError(apiError || (err instanceof Error ? err.message : "Action failed"));
-    } finally {
       setPendingAction(null);
+      setError(friendlyError(err));
     }
   };
 
-  const saveSettings = () => handleAction("save", async () => {
-    const finalPollCron = advancedMode ? pollCron : toPollCron(pollIntervalMinutes);
-    const finalDigestCron = advancedMode ? digestCron : toDigestCron(digestTime);
-    const updated = await apiClient.updateSettings({
-      pollCron: finalPollCron,
-      digestCron: finalDigestCron,
-      followupAfterDays,
-      syncFromDate,
-      modelEmail,
-      modelCv,
-      modelMatcher,
-      modelExplorer,
-      modelClassification
+  const saveSettings = () =>
+    runAction("save", async () => {
+      const finalPollCron = advancedMode ? pollCron : toPollCron(pollIntervalMinutes);
+      const finalDigestCron = advancedMode ? digestCron : toDigestCron(digestTime);
+      const updated = await apiClient.updateSettings({
+        pollCron: finalPollCron,
+        digestCron: finalDigestCron,
+        followupAfterDays,
+        syncFromDate,
+        modelEmail,
+        modelCv,
+        modelMatcher,
+        modelExplorer,
+        modelClassification,
+      });
+      syncUiFromSettings(updated);
+      setMessage({ text: "Settings saved.", type: "ok" });
     });
-    syncUiFromSettings(updated);
-    setMessage({ text: "Settings saved successfully!", type: 'ok' });
-  });
+
+  const startSync = () =>
+    runAction("sync", async () => {
+      const { jobId } = await apiClient.runSync();
+      setSyncJobId(jobId);
+      setMessage({ text: "Sync started in background.", type: "ok" });
+    });
+
+  const sendDigest = () =>
+    runAction("digest", async () => {
+      await apiClient.sendDigest();
+      setMessage({ text: "Digest sent.", type: "ok" });
+    });
+
+  const resetAndSync = () =>
+    runAction("reset_sync", async () => {
+      if (!confirm("This will erase tracked applications and rebuild from Gmail. Continue?")) {
+        return;
+      }
+      const { jobId } = await apiClient.resetAndSync();
+      setSyncJobId(jobId);
+      setMessage({ text: "Reset + sync started in background.", type: "ok" });
+    });
+
+  const modelOptions = (currentValue: string) => (
+    <>
+      {ollamaModels.map((model) => (
+        <option key={model} value={model}>
+          {model}
+        </option>
+      ))}
+      {!ollamaModels.includes(currentValue) && currentValue ? <option value={currentValue}>{currentValue}</option> : null}
+    </>
+  );
 
   return (
-    <div className="page-grid" style={{ maxWidth: '1200px', margin: '0 auto' }}>
-      <section className="panel" style={{ gridColumn: '1 / -1' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 className="responsive-title">Configuration & LLM Registry</h1>
-            <p className="panel-help">Manage your job search infrastructure, automation schedules, and AI models.</p>
-          </div>
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-            {pendingAction && <div className="spinner" style={{ width: '2rem', height: '2rem' }}></div>}
-          </div>
-        </div>
-
-        {error && <div className="error-text" style={{ padding: '1rem', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '8px', marginTop: '1rem' }}>⚠️ {error}</div>}
-        {message && <div className="ok-text" style={{ padding: '1rem', background: 'rgba(16, 185, 129, 0.1)', borderRadius: '8px', marginTop: '1rem' }}>✅ {message.text}</div>}
-      </section>
-
-      {/* LLM Agents Configuration */}
-      <section className="panel" style={{ padding: 0 }}>
-        <details style={{ width: '100%' }}>
-          <summary className="settings-summary">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-              <span className="emoji-icon">🧠</span>
-              <h2 style={{ margin: 0 }}>AI Agent Models</h2>
-            </div>
-            <span className="summary-hint">Click to show/hide models ▼</span>
-          </summary>
-          <div className="settings-details-content">
-            <p className="panel-help" style={{ marginBottom: '1.5rem' }}>Assign specific LLM models for each specialized task explorer.</p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div className="form-group">
-                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-                  Email Extractor <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Status updates & dates)</small>
-                </label>
-                <select value={modelEmail} onChange={(e) => setModelEmail(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-                  {!ollamaModels.includes(modelEmail) && modelEmail && <option value={modelEmail}>{modelEmail} (Current)</option>}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-                  CV Processor <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Skills & summary extraction)</small>
-                </label>
-                <select value={modelCv} onChange={(e) => setModelCv(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-                  {!ollamaModels.includes(modelCv) && modelCv && <option value={modelCv}>{modelCv} (Current)</option>}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-                  Job Matcher <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Score & Matching analysis)</small>
-                </label>
-                <select value={modelMatcher} onChange={(e) => setModelMatcher(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-                  {!ollamaModels.includes(modelMatcher) && modelMatcher && <option value={modelMatcher}>{modelMatcher} (Current)</option>}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-                  Job Discovery <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Careers portal exploration)</small>
-                </label>
-                <select value={modelExplorer} onChange={(e) => setModelExplorer(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-                  {!ollamaModels.includes(modelExplorer) && modelExplorer && <option value={modelExplorer}>{modelExplorer} (Current)</option>}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label style={{ fontWeight: '600', display: 'block', marginBottom: '0.5rem' }}>
-                  Company Classifier <small style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(Industry categorization)</small>
-                </label>
-                <select value={modelClassification} onChange={(e) => setModelClassification(e.target.value)} disabled={busy} style={{ width: '100%' }}>
-                  {ollamaModels.map(m => <option key={m} value={m}>{m}</option>)}
-                  {!ollamaModels.includes(modelClassification) && modelClassification && <option value={modelClassification}>{modelClassification} (Current)</option>}
-                </select>
-              </div>
-            </div>
-          </div>
-        </details>
-      </section>
-
-      {/* Scheduling & Automation */}
-      <section className="panel" style={{ gridColumn: '1 / -1' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.5rem' }}>
-          <span style={{ fontSize: '1.5rem' }}>⚙️</span>
-          <h2 style={{ margin: 0 }}>Automation & Behavior</h2>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-          <article className="panel highlighted" style={{ margin: 0 }}>
-            <h3 style={{ marginTop: 0 }}>Scheduling Policy</h3>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
-              {schedulePresets.map((preset) => (
-                <button
-                  key={preset.label}
-                  className="button-secondary"
-                  onClick={() => {
-                    setPollIntervalMinutes(preset.pollMinutes);
-                    setDigestTime(preset.digestTime);
-                    setAdvancedMode(false);
-                  }}
-                  disabled={busy}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </article>
-
-          <article className="panel highlighted" style={{ margin: 0 }}>
-            <h3 style={{ marginTop: 0 }}>Sync & Thresholds</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1.5rem', marginTop: '1rem' }}>
-              <label style={{ margin: 0 }}>
-                Follow-up Threshold
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input type="number" value={followupAfterDays} onChange={(e) => setFollowupAfterDays(Number(e.target.value))} disabled={busy} style={{ width: '80px' }} />
-                  <span className="panel-help" style={{ margin: 0 }}>days</span>
-                </div>
-              </label>
-              <label style={{ margin: 0 }}>
-                Sync Scan Start Date
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input type="date" value={syncFromDate || ""} onChange={(e) => setSyncFromDate(e.target.value || null)} disabled={busy} style={{ width: '100%', minWidth: '150px' }} />
-                </div>
-              </label>
-            </div>
-          </article>
-        </div>
-
-        <div className="panel" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', margin: 0 }}>
-          <label className="checkbox-label" style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <input type="checkbox" checked={advancedMode} onChange={(e) => setAdvancedMode(e.target.checked)} disabled={busy} />
-            Enable Advanced Cron Expressions
-          </label>
-
-          <div className="settings-grid">
-            {!advancedMode ? (
-              <>
-                <label>
-                  Scan Frequency
-                  <select value={pollIntervalMinutes} onChange={(e) => setPollIntervalMinutes(Number(e.target.value))} disabled={busy}>
-                    {[5, 10, 15, 30, 60].map(m => <option key={m} value={m}>{m} minutes</option>)}
-                  </select>
-                </label>
-                <label>
-                  Daily Digest Time
-                  <input type="time" value={digestTime} onChange={(e) => setDigestTime(e.target.value)} disabled={busy} />
-                </label>
-              </>
-            ) : (
-              <>
-                <label>
-                  Poll Cron
-                  <input value={pollCron} onChange={(e) => setPollCron(e.target.value)} disabled={busy} style={{ fontFamily: 'monospace' }} />
-                </label>
-                <label>
-                  Digest Cron
-                  <input value={digestCron} onChange={(e) => setDigestCron(e.target.value)} disabled={busy} style={{ fontFamily: 'monospace' }} />
-                </label>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="settings-save-actions">
-          <button onClick={saveSettings} disabled={busy} className="save-btn">
-            {pendingAction === "save" ? "Applying Changes..." : "🚀 Save Global Settings"}
+    <div className="page-grid">
+      <section className="panel">
+        <div className="panel-header">
+          <h2>Settings</h2>
+          <button onClick={saveSettings} disabled={busy}>
+            {pendingAction === "save" ? "Saving..." : "Save"}
           </button>
         </div>
-      </section >
+        <p className="panel-help">Control schedule, models, and maintenance actions from one place.</p>
+        {error ? <p className="error-text">{error}</p> : null}
+        {message ? <p className={message.type === "ok" ? "ok-text" : "error-text"}>{message.text}</p> : null}
+      </section>
 
-      {/* Maintenance Operations */}
-      < section className="panel" style={{ gridColumn: '1 / -1' }}>
-        <h2 style={{ marginBottom: '1.5rem' }}>System Operations</h2>
-        <div className="actions" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
-          <article className="panel highlighted" style={{ margin: 0 }}>
-            <h3>Manual Triggers</h3>
-            <p className="panel-help" style={{ marginBottom: '1rem' }}>Trigger immediate system actions without waiting for schedule.</p>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <button disabled={busy} style={{ flex: 1 }} onClick={async () => {
-                try {
-                  setPendingAction("sync"); setError(null); setMessage(null);
-                  const { jobId } = await apiClient.runSync();
-                  setSyncJobId(jobId);
-                  setMessage({ text: "Sync started, processing emails in background...", type: 'ok' });
-                } catch (err) {
-                  setPendingAction(null);
-                  setError(err instanceof Error ? err.message : "Failed to start sync");
-                }
-              }}>{pendingAction === "sync" ? "Syncing..." : "Run Sync"}</button>
-              <button className="button-secondary" disabled={busy} style={{ flex: 1 }} onClick={() => handleAction("digest", async () => { await apiClient.sendDigest(); setMessage({ text: "Digest sent.", type: 'ok' }); })}>Send Digest</button>
-            </div>
-          </article>
-
-          <article className="panel highlighted" style={{ margin: 0, borderLeft: '4px solid #ef4444' }}>
-            <h3 style={{ color: '#ef4444' }}>Danger Zone</h3>
-            <p className="panel-help" style={{ marginBottom: '1rem' }}>Erase all application data and rebuild from Gmail inbox.</p>
-            <button className="danger" disabled={busy} style={{ width: '100%' }} onClick={async () => {
-              if (!confirm("This will erase ALL tracked applications. Continue?")) return;
-              try {
-                setPendingAction("reset_sync"); setError(null); setMessage(null);
-                const { jobId } = await apiClient.resetAndSync();
-                setSyncJobId(jobId);
-                setMessage({ text: "Reset started, re-importing all emails in background...", type: 'ok' });
-              } catch (err) {
-                setPendingAction(null);
-                setError(err instanceof Error ? err.message : "Failed to start reset");
-              }
-            }}>{pendingAction === "reset_sync" ? "Resetting..." : "Reset & Full Re-sync"}</button>
-          </article>
+      <section className="panel">
+        <h3>Schedule</h3>
+        <div className="preset-grid">
+          {schedulePresets.map((preset) => (
+            <button
+              key={preset.label}
+              className="secondary"
+              onClick={() => {
+                setPollIntervalMinutes(preset.pollMinutes);
+                setDigestTime(preset.digestTime);
+                setAdvancedMode(false);
+              }}
+              disabled={busy}
+            >
+              {preset.label}
+            </button>
+          ))}
         </div>
-      </section >
-    </div >
+
+        <div className="settings-grid">
+          <label>
+            Follow-up after (days)
+            <input
+              type="number"
+              value={followupAfterDays}
+              onChange={(e) => setFollowupAfterDays(Number(e.target.value))}
+              disabled={busy}
+              min={1}
+              max={60}
+            />
+          </label>
+          <label>
+            Sync start date
+            <input type="date" value={syncFromDate || ""} onChange={(e) => setSyncFromDate(e.target.value || null)} disabled={busy} />
+          </label>
+        </div>
+
+        <label className="checkbox-label">
+          <input type="checkbox" checked={advancedMode} onChange={(e) => setAdvancedMode(e.target.checked)} disabled={busy} />
+          Advanced cron mode
+        </label>
+
+        {!advancedMode ? (
+          <div className="settings-grid">
+            <label>
+              Poll frequency
+              <select value={pollIntervalMinutes} onChange={(e) => setPollIntervalMinutes(Number(e.target.value))} disabled={busy}>
+                {[5, 10, 15, 30, 60].map((minutes) => (
+                  <option key={minutes} value={minutes}>
+                    Every {minutes} min
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Daily digest time
+              <input type="time" value={digestTime} onChange={(e) => setDigestTime(e.target.value)} disabled={busy} />
+            </label>
+          </div>
+        ) : (
+          <div className="settings-grid">
+            <label>
+              Poll cron
+              <input value={pollCron} onChange={(e) => setPollCron(e.target.value)} disabled={busy} />
+            </label>
+            <label>
+              Digest cron
+              <input value={digestCron} onChange={(e) => setDigestCron(e.target.value)} disabled={busy} />
+            </label>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <h3>AI Models</h3>
+        <div className="settings-grid">
+          <label>
+            Email extractor
+            <select value={modelEmail} onChange={(e) => setModelEmail(e.target.value)} disabled={busy}>
+              {modelOptions(modelEmail)}
+            </select>
+          </label>
+          <label>
+            CV processor
+            <select value={modelCv} onChange={(e) => setModelCv(e.target.value)} disabled={busy}>
+              {modelOptions(modelCv)}
+            </select>
+          </label>
+          <label>
+            Job matcher
+            <select value={modelMatcher} onChange={(e) => setModelMatcher(e.target.value)} disabled={busy}>
+              {modelOptions(modelMatcher)}
+            </select>
+          </label>
+          <label>
+            Job explorer
+            <select value={modelExplorer} onChange={(e) => setModelExplorer(e.target.value)} disabled={busy}>
+              {modelOptions(modelExplorer)}
+            </select>
+          </label>
+          <label>
+            Company classifier
+            <select value={modelClassification} onChange={(e) => setModelClassification(e.target.value)} disabled={busy}>
+              {modelOptions(modelClassification)}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h3>Operations</h3>
+        <p className="panel-help">Run immediate actions when you do not want to wait for schedule.</p>
+        <div className="actions">
+          <button onClick={startSync} disabled={busy}>
+            {pendingAction === "sync" ? "Running sync..." : "Run Sync"}
+          </button>
+          <button className="secondary" onClick={sendDigest} disabled={busy}>
+            {pendingAction === "digest" ? "Sending..." : "Send Digest"}
+          </button>
+          <button className="danger" onClick={resetAndSync} disabled={busy}>
+            {pendingAction === "reset_sync" ? "Resetting..." : "Reset + Full Sync"}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 };
